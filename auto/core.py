@@ -152,6 +152,83 @@ class AutoCore:
                     logger.warning(f"Failed to clean up state for {state.issue_id}: {e}")
         
         return cleaned
+    
+    def get_github_repository(self) -> Optional["GitHubRepository"]:
+        """Get GitHub repository context.
+        
+        Returns:
+            GitHub repository or None if not available
+        """
+        try:
+            from auto.integrations.github import detect_repository
+            return detect_repository()
+        except Exception as e:
+            logger.debug(f"Failed to get GitHub repository: {e}")
+            return None
+    
+    def validate_github_access(self) -> bool:
+        """Validate GitHub access.
+        
+        Returns:
+            True if GitHub is accessible, False otherwise
+        """
+        try:
+            from auto.integrations.github import validate_github_auth
+            return validate_github_auth()
+        except Exception as e:
+            logger.debug(f"Failed to validate GitHub access: {e}")
+            return False
+    
+    def get_active_worktrees(self) -> List["WorktreeInfo"]:
+        """Get list of active worktrees for this project.
+        
+        Returns:
+            List of active worktree information
+        """
+        try:
+            from auto.integrations.git import GitWorktreeManager
+            config = self.config
+            manager = GitWorktreeManager(config)
+            return manager.list_worktrees()
+        except Exception as e:
+            logger.debug(f"Failed to get active worktrees: {e}")
+            return []
+    
+    def cleanup_orphaned_worktrees(self) -> int:
+        """Clean up worktrees that don't have corresponding workflow states.
+        
+        Returns:
+            Number of orphaned worktrees cleaned up
+        """
+        try:
+            from auto.integrations.git import GitWorktreeManager
+            
+            cleaned = 0
+            config = self.config
+            manager = GitWorktreeManager(config)
+            
+            # Get all auto worktrees
+            worktrees = manager.list_worktrees()
+            
+            # Get all workflow states
+            states = self.get_workflow_states()
+            state_issue_ids = {state.issue_id for state in states}
+            
+            # Find orphaned worktrees
+            for worktree in worktrees:
+                if worktree.issue_id not in state_issue_ids:
+                    logger.info(f"Cleaning up orphaned worktree for {worktree.issue_id}")
+                    try:
+                        manager.cleanup_worktree(worktree)
+                        cleaned += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to clean up orphaned worktree {worktree.path}: {e}")
+            
+            return cleaned
+            
+        except Exception as e:
+            logger.warning(f"Failed to cleanup orphaned worktrees: {e}")
+            return 0
 
 
 # Global core instance
