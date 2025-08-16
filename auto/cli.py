@@ -635,6 +635,110 @@ def ls_alias(state: str, assignee: str, labels: tuple, limit: int, web: bool, ve
 
 @cli.command()
 @click.argument("issue_id")
+@click.option("--web", "-w", is_flag=True, help="Open issue in web browser")
+@click.option("--verbose", "-v", is_flag=True, help="Show additional metadata")
+def show(issue_id: str, web: bool, verbose: bool) -> None:
+    """Show detailed information for a specific issue."""
+    try:
+        from auto.integrations.github import GitHubIntegration, GitHubIntegrationError
+        
+        # Parse issue identifier
+        identifier = IssueIdentifier.parse(issue_id)
+        
+        # If web flag is set, delegate to gh CLI
+        if web:
+            try:
+                result = run_command(f"gh issue view {identifier.issue_id} --web", check=True)
+                return
+            except Exception as e:
+                console.print(f"[red]Error:[/red] Failed to open issue in browser: {e}")
+                sys.exit(1)
+        
+        # Initialize GitHub integration
+        try:
+            github = GitHubIntegration()
+        except GitHubIntegrationError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        
+        if verbose:
+            console.print(f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}")
+        
+        # Fetch issue details
+        try:
+            issue = github.fetch_issue(identifier.issue_id)
+        except GitHubIntegrationError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        
+        # Display issue details
+        console.print(f"[bold cyan]Issue {issue.id}[/bold cyan]: [bold]{issue.title}[/bold]")
+        console.print()
+        
+        # Show metadata
+        metadata_table = Table(show_header=False, box=None, padding=(0, 1))
+        metadata_table.add_column("Field", style="dim", width=12)
+        metadata_table.add_column("Value")
+        
+        metadata_table.add_row("Status:", f"[{'green' if issue.status.value.lower() == 'open' else 'red'}]{issue.status.value}[/]")
+        metadata_table.add_row("Assignee:", issue.assignee or "Unassigned")
+        
+        if issue.labels:
+            labels_display = ", ".join([f"[magenta]{label}[/magenta]" for label in issue.labels])
+            metadata_table.add_row("Labels:", labels_display)
+        else:
+            metadata_table.add_row("Labels:", "None")
+        
+        if verbose:
+            if issue.created_at:
+                metadata_table.add_row("Created:", issue.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+            if issue.updated_at:
+                metadata_table.add_row("Updated:", issue.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+            if issue.url:
+                metadata_table.add_row("URL:", issue.url)
+        
+        console.print(metadata_table)
+        console.print()
+        
+        # Show description
+        if issue.description and issue.description.strip():
+            console.print("[bold]Description:[/bold]")
+            console.print()
+            # Render markdown-like content with basic formatting
+            description_lines = issue.description.strip().split('\n')
+            for line in description_lines:
+                if line.strip().startswith('# '):
+                    console.print(f"[bold]{line.strip()[2:]}[/bold]")
+                elif line.strip().startswith('## '):
+                    console.print(f"[bold]{line.strip()[3:]}[/bold]")
+                elif line.strip().startswith('- ') or line.strip().startswith('* '):
+                    console.print(f"  • {line.strip()[2:]}")
+                elif line.strip().startswith('```'):
+                    console.print(f"[dim]{line}[/dim]")
+                else:
+                    console.print(line)
+        else:
+            console.print("[dim]No description provided[/dim]")
+        
+        console.print()
+        
+        if not web and not verbose:
+            console.print(f"[dim]Use 'auto show {issue_id} --web' to view in browser[/dim]")
+            console.print(f"[dim]Use 'auto fetch {issue_id}' to start working on this issue[/dim]")
+        
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Unexpected error: {e}")
+        if verbose:
+            import traceback
+            console.print("[dim]" + traceback.format_exc() + "[/dim]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("issue_id")
 def run(issue_id: str) -> None:
     """Run complete workflow for issue (Phase 6+)."""
     try:
