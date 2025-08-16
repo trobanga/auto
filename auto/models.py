@@ -77,6 +77,15 @@ class WorkflowStatus(str, Enum):
     FAILED = "failed"
 
 
+class AIStatus(str, Enum):
+    """AI implementation status values."""
+    
+    NOT_STARTED = "not_started"
+    IN_PROGRESS = "in_progress"
+    IMPLEMENTED = "implemented"
+    FAILED = "failed"
+
+
 class Issue(BaseModel):
     """Issue model for GitHub and Linear issues."""
     
@@ -201,6 +210,46 @@ class Review(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
+class AIFileChange(BaseModel):
+    """AI suggested file change."""
+    
+    path: str = Field(description="File path")
+    action: str = Field(description="Action: create, modify, delete")
+    content: Optional[str] = Field(default=None, description="File content for create/modify")
+    description: Optional[str] = Field(default=None, description="Change description")
+
+
+class AICommand(BaseModel):
+    """AI suggested command to run."""
+    
+    command: str = Field(description="Command to execute")
+    description: Optional[str] = Field(default=None, description="Command description")
+    working_directory: Optional[str] = Field(default=None, description="Working directory")
+
+
+class AIResponse(BaseModel):
+    """AI response model for structured parsing."""
+    
+    success: bool = Field(description="Whether AI implementation was successful")
+    summary: Optional[str] = Field(default=None, description="Implementation summary")
+    file_changes: List[AIFileChange] = Field(default_factory=list, description="Suggested file changes")
+    commands: List[AICommand] = Field(default_factory=list, description="Commands to run")
+    error_message: Optional[str] = Field(default=None, description="Error message if failed")
+    raw_output: Optional[str] = Field(default=None, description="Raw AI output")
+
+
+class PRMetadata(BaseModel):
+    """Pull request metadata model."""
+    
+    title: str = Field(description="PR title")
+    description: str = Field(description="PR description")
+    labels: List[str] = Field(default_factory=list, description="PR labels")
+    assignees: List[str] = Field(default_factory=list, description="PR assignees")
+    reviewers: List[str] = Field(default_factory=list, description="PR reviewers")
+    draft: bool = Field(default=False, description="Whether PR is a draft")
+    base_branch: str = Field(default="main", description="Base branch for PR")
+
+
 class WorkflowState(BaseModel):
     """State model for tracking workflow progress."""
     
@@ -212,6 +261,9 @@ class WorkflowState(BaseModel):
     repository: Optional[GitHubRepository] = Field(default=None, description="Repository context")
     issue: Optional[Issue] = Field(default=None, description="Issue details")
     status: WorkflowStatus = Field(description="Current workflow status")
+    ai_status: AIStatus = Field(default=AIStatus.NOT_STARTED, description="AI implementation status")
+    ai_response: Optional[AIResponse] = Field(default=None, description="AI implementation response")
+    pr_metadata: Optional[PRMetadata] = Field(default=None, description="PR metadata")
     review_iteration: int = Field(default=0, description="Current review iteration")
     reviews: List[Review] = Field(default_factory=list, description="Review history")
     created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
@@ -221,6 +273,13 @@ class WorkflowState(BaseModel):
     def update_status(self, status: WorkflowStatus) -> None:
         """Update workflow status and timestamp."""
         self.status = status
+        self.updated_at = datetime.now()
+    
+    def update_ai_status(self, ai_status: AIStatus, ai_response: Optional[AIResponse] = None) -> None:
+        """Update AI implementation status and timestamp."""
+        self.ai_status = ai_status
+        if ai_response:
+            self.ai_response = ai_response
         self.updated_at = datetime.now()
     
     def add_review(self, review: Review) -> None:
@@ -276,6 +335,22 @@ class AIConfig(BaseModel):
         default="Address the following review comments: {comments}",
         description="Update prompt template"
     )
+    timeout: int = Field(default=300, description="AI command timeout (seconds)")
+    max_retries: int = Field(default=2, description="Maximum retries for failed commands")
+    include_file_context: bool = Field(default=True, description="Include relevant file content in prompts")
+    response_format: str = Field(default="structured", description="structured|freeform")
+    
+    # Custom prompt support
+    prompt_templates_dir: str = Field(default="~/.auto/prompts", description="User prompt templates directory")
+    allow_custom_prompts: bool = Field(default=True, description="Enable custom prompt CLI options")
+    default_template: str = Field(default="implementation", description="Default template name")
+    prompt_variables: List[str] = Field(
+        default_factory=lambda: [
+            "issue_id", "issue_title", "issue_description", "acceptance_criteria",
+            "repository", "branch", "labels", "assignee"
+        ],
+        description="Available template variables"
+    )
 
 
 class WorkflowsConfig(BaseModel):
@@ -289,6 +364,12 @@ class WorkflowsConfig(BaseModel):
     review_check_interval: int = Field(default=60, description="Review check interval (seconds)")
     worktree_cleanup_on_merge: bool = Field(default=True, description="Auto-cleanup merged worktrees")
     worktree_conflict_resolution: str = Field(default="prompt", description="prompt|force|skip")
+    auto_create_pr: bool = Field(default=True, description="Auto-create PR after implementation")
+    pr_draft_mode: bool = Field(default=False, description="Create draft PRs by default")
+    implementation_commit_message: str = Field(
+        default="feat: implement {issue_id} - {issue_title}",
+        description="Commit message template for implementations"
+    )
 
 
 class Config(BaseModel):

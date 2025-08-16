@@ -1,0 +1,64 @@
+name: performance
+description: Performance optimization implementation template
+prompt: |
+  Implement the following issue with a strong focus on performance optimization: {issue_description}
+
+  ## Issue Details
+  - **ID**: {issue_id}
+  - **Title**: {issue_title}
+  - **Labels**: {labels}
+  - **Assignee**: {assignee}
+
+  ## Repository Context
+  - **Repository**: {repository}
+  - **Branch**: {branch}
+
+  {acceptance_criteria}
+
+  ## Performance Requirements
+  Please ensure your implementation:
+  1. Optimizes for speed and efficiency
+  2. Minimizes memory usage and prevents memory leaks
+  3. Uses efficient algorithms and data structures
+  4. Implements caching where appropriate
+  5. Considers lazy loading and asynchronous patterns
+  6. Minimizes network requests and database queries
+  7. Includes performance benchmarks and monitoring
+  8. Considers scalability for high-load scenarios
+
+  Document performance considerations and any trade-offs made.
+
+  ## Response Format
+
+  Please provide your response in the following structured format:
+
+  **IMPLEMENTATION SUMMARY:**
+  Brief description of what you implemented
+
+  **FILES MODIFIED:**
+  For each file changed, specify:
+  - File path - action - Brief description of changes
+
+  **COMMANDS TO RUN:**
+  Any commands that should be executed after implementation (e.g., npm install, pip install, tests)
+
+  **PERFORMANCE CONSIDERATIONS:**
+  Document performance optimizations and trade-offs made
+
+  **NOTES:**
+  Any additional notes or considerations
+
+variables:
+  - issue_id
+  - issue_title
+  - issue_description
+  - acceptance_criteria
+  - repository
+  - branch
+  - labels
+  - assignee
+tags:
+  - performance
+  - optimization
+  - implementation
+agent: coder

@@ -1,0 +1,49 @@
+name: implementation
+description: Standard implementation template
+prompt: |
+  Implement the following issue: {issue_description}
+
+  ## Issue Details
+  - **ID**: {issue_id}
+  - **Title**: {issue_title}
+  - **Labels**: {labels}
+  - **Assignee**: {assignee}
+
+  ## Repository Context
+  - **Repository**: {repository}
+  - **Branch**: {branch}
+
+  {acceptance_criteria}
+
+  Please implement this feature following best practices for code quality, testing, and documentation.
+
+  ## Response Format
+
+  Please provide your response in the following structured format:
+
+  **IMPLEMENTATION SUMMARY:**
+  Brief description of what you implemented
+
+  **FILES MODIFIED:**
+  For each file changed, specify:
+  - File path - action - Brief description of changes
+
+  **COMMANDS TO RUN:**
+  Any commands that should be executed after implementation (e.g., npm install, pip install, tests)
+
+  **NOTES:**
+  Any additional notes or considerations
+
+variables:
+  - issue_id
+  - issue_title
+  - issue_description
+  - acceptance_criteria
+  - repository
+  - branch
+  - labels
+  - assignee
+tags:
+  - default
+  - implementation
+agent: coder

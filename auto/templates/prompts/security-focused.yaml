@@ -1,0 +1,62 @@
+name: security-focused
+description: Security-focused implementation template
+prompt: |
+  Implement the following issue with a strong focus on security: {issue_description}
+
+  ## Issue Details
+  - **ID**: {issue_id}
+  - **Title**: {issue_title}
+  - **Labels**: {labels}
+  - **Assignee**: {assignee}
+
+  ## Repository Context
+  - **Repository**: {repository}
+  - **Branch**: {branch}
+
+  {acceptance_criteria}
+
+  ## Security Requirements
+  Please ensure your implementation:
+  1. Validates all inputs and sanitizes data
+  2. Uses secure authentication and authorization patterns
+  3. Follows OWASP security guidelines
+  4. Implements proper error handling without information disclosure
+  5. Uses secure communication protocols where applicable
+  6. Follows the principle of least privilege
+  7. Includes security testing considerations
+
+  Prioritize security over convenience and document any security considerations.
+
+  ## Response Format
+
+  Please provide your response in the following structured format:
+
+  **IMPLEMENTATION SUMMARY:**
+  Brief description of what you implemented
+
+  **FILES MODIFIED:**
+  For each file changed, specify:
+  - File path - action - Brief description of changes
+
+  **COMMANDS TO RUN:**
+  Any commands that should be executed after implementation (e.g., npm install, pip install, tests)
+
+  **SECURITY CONSIDERATIONS:**
+  Document any security considerations and decisions made
+
+  **NOTES:**
+  Any additional notes or considerations
+
+variables:
+  - issue_id
+  - issue_title
+  - issue_description
+  - acceptance_criteria
+  - repository
+  - branch
+  - labels
+  - assignee
+tags:
+  - security
+  - implementation
+agent: coder
