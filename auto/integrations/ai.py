@@ -1,577 +1,639 @@
-"""AI integration module for Claude CLI command execution."""
+"""
+AI Integration Module
 
+Provides Claude CLI integration for automated code implementation, review, and updates.
+Includes agent selection, prompt formatting, response parsing, and error handling.
+"""
+
+import asyncio
 import json
-import os
-import re
+import logging
 import subprocess
-import tempfile
+import sys
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-from auto.models import AICommand, AIConfig, AIFileChange, AIResponse, Issue
-from auto.utils.logger import get_logger
-from auto.utils.shell import run_command
+from typing import Dict, List, Optional, Tuple, Union
+from ..models import Issue, AIConfig, AIResponse
+from ..utils.logger import get_logger
 
 logger = get_logger(__name__)
 
 
-class AIError(Exception):
-    """AI integration error."""
-    pass
+@dataclass
+class AICommandResult:
+    """Result from executing an AI command."""
+    success: bool
+    output: str
+    error: str
+    exit_code: int
+    duration: float
 
 
 class ClaudeIntegration:
-    """Claude CLI integration with agent selection and prompt formatting."""
+    """
+    Claude CLI integration providing AI-powered code implementation, review, and updates.
     
+    Handles agent selection, prompt formatting, command execution, and response parsing
+    for seamless integration with the auto workflow system.
+    """
+
     def __init__(self, config: AIConfig):
-        """Initialize Claude integration.
-        
-        Args:
-            config: AI configuration
-        """
+        """Initialize Claude integration with configuration."""
         self.config = config
-        self.command = config.command
-        self.implementation_agent = config.implementation_agent
-        self.review_agent = config.review_agent
-        self.update_agent = config.update_agent
-        self.timeout = config.timeout
-        self.max_retries = config.max_retries
-        self.include_file_context = config.include_file_context
-        self.response_format = config.response_format
-    
-    def validate_ai_prerequisites(self) -> None:
-        """Validate Claude CLI availability and agent configuration.
-        
-        Raises:
-            AIError: If prerequisites are not met
-        """
-        try:
-            # Check if Claude CLI is available
-            result = run_command([self.command, "--version"], capture_output=True, timeout=10)
-            if result.returncode != 0:
-                raise AIError(f"Claude CLI not available. Please install {self.command}")
-            
-            logger.debug(f"Claude CLI version: {result.stdout.strip()}")
-            
-            # Validate agent configuration
-            agents = [self.implementation_agent, self.review_agent, self.update_agent]
-            for agent in agents:
-                if not agent or not isinstance(agent, str):
-                    raise AIError(f"Invalid agent configuration: {agent}")
-            
-        except subprocess.TimeoutExpired:
-            raise AIError(f"Claude CLI command timed out. Check {self.command} installation")
-        except Exception as e:
-            raise AIError(f"Failed to validate Claude CLI: {e}")
-    
-    def execute_ai_command(
-        self,
-        prompt: str,
-        agent: str,
-        working_directory: Optional[str] = None,
-        additional_args: Optional[List[str]] = None
-    ) -> str:
-        """Execute Claude CLI command with specific agent.
-        
-        Args:
-            prompt: Prompt to send to Claude
-            agent: Agent name to use
-            working_directory: Working directory for command execution
-            additional_args: Additional command-line arguments
-            
-        Returns:
-            Raw Claude response
-            
-        Raises:
-            AIError: If command fails or times out
-        """
-        # Prepare command
-        cmd = [self.command]
-        if agent:
-            cmd.extend(["--agent", agent])
-        
-        if additional_args:
-            cmd.extend(additional_args)
-        
-        # Add prompt as final argument or use stdin
-        if len(prompt) < 1000:  # Use command line for short prompts
-            cmd.append(prompt)
-            stdin_input = None
-        else:  # Use stdin for longer prompts
-            stdin_input = prompt
-        
-        logger.debug(f"Executing AI command: {' '.join(cmd[:3])}... (agent: {agent})")
-        
-        # Execute with retries
-        last_error = None
-        for attempt in range(self.max_retries + 1):
-            try:
-                result = run_command(
-                    cmd,
-                    capture_output=True,
-                    timeout=self.timeout,
-                    cwd=working_directory,
-                    input=stdin_input
-                )
-                
-                if result.returncode == 0:
-                    response = result.stdout.strip()
-                    logger.debug(f"AI command succeeded (attempt {attempt + 1})")
-                    return response
-                else:
-                    error_msg = result.stderr.strip() or "Unknown error"
-                    last_error = AIError(f"Claude CLI failed: {error_msg}")
-                    
-                    if attempt < self.max_retries:
-                        logger.warning(f"AI command failed (attempt {attempt + 1}), retrying: {error_msg}")
-                    else:
-                        logger.error(f"AI command failed after {self.max_retries + 1} attempts: {error_msg}")
-                        
-            except subprocess.TimeoutExpired:
-                last_error = AIError(f"Claude CLI command timed out after {self.timeout} seconds")
-                if attempt < self.max_retries:
-                    logger.warning(f"AI command timed out (attempt {attempt + 1}), retrying")
-                else:
-                    logger.error(f"AI command timed out after {self.max_retries + 1} attempts")
-            except Exception as e:
-                last_error = AIError(f"Failed to execute Claude CLI: {e}")
-                if attempt < self.max_retries:
-                    logger.warning(f"AI command error (attempt {attempt + 1}), retrying: {e}")
-                else:
-                    logger.error(f"AI command error after {self.max_retries + 1} attempts: {e}")
-        
-        raise last_error or AIError("AI command failed for unknown reasons")
-    
-    def format_implementation_prompt(
-        self,
-        issue: Issue,
-        repository_context: Optional[Dict[str, Any]] = None,
+        self.command = config.command or "claude"
+        self.logger = get_logger(f"{__name__}.ClaudeIntegration")
+
+    async def execute_implementation(
+        self, 
+        issue: Issue, 
+        worktree_path: str,
         custom_prompt: Optional[str] = None
-    ) -> str:
-        """Format implementation prompt with issue context.
+    ) -> AIResponse:
+        """
+        Execute AI implementation for an issue in the specified worktree.
         
         Args:
             issue: Issue to implement
-            repository_context: Additional repository context
-            custom_prompt: Custom prompt override
+            worktree_path: Path to worktree for implementation
+            custom_prompt: Optional custom prompt override
             
         Returns:
-            Formatted prompt for Claude
+            AIResponse containing implementation results
+            
+        Raises:
+            AIIntegrationError: If AI command fails or response is invalid
+        """
+        try:
+            # Validate prerequisites
+            await self._validate_prerequisites()
+            
+            # Format implementation prompt
+            prompt = self._format_implementation_prompt(issue, worktree_path, custom_prompt)
+            
+            # Execute AI command
+            self.logger.info(f"Running AI implementation for issue {issue.id} in {worktree_path}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.implementation_agent,
+                working_directory=worktree_path
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"AI implementation failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            # Parse AI response
+            ai_response = self._parse_ai_response(result.output, "implementation")
+            
+            self.logger.info(f"AI implementation completed for issue {issue.id}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"AI implementation failed for issue {issue.id}: {e}")
+            raise
+
+    async def execute_review(
+        self, 
+        pr_number: int, 
+        repository: str,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Execute AI review for a pull request.
+        
+        Args:
+            pr_number: Pull request number
+            repository: Repository name
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing review results
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            prompt = self._format_review_prompt(pr_number, repository, custom_prompt)
+            
+            self.logger.info(f"Running AI review for PR #{pr_number}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.review_agent
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"AI review failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "review")
+            
+            self.logger.info(f"AI review completed for PR #{pr_number}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"AI review failed for PR #{pr_number}: {e}")
+            raise
+
+    async def execute_update(
+        self, 
+        issue: Issue, 
+        review_comments: List[str],
+        worktree_path: str,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Execute AI update to address review comments.
+        
+        Args:
+            issue: Original issue
+            review_comments: List of review comments to address
+            worktree_path: Path to worktree for updates
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing update results
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            prompt = self._format_update_prompt(issue, review_comments, custom_prompt)
+            
+            self.logger.info(f"Running AI update for issue {issue.id}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.update_agent,
+                working_directory=worktree_path
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"AI update failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "update")
+            
+            self.logger.info(f"AI update completed for issue {issue.id}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"AI update failed for issue {issue.id}: {e}")
+            raise
+
+    async def _execute_ai_command(
+        self,
+        prompt: str,
+        agent: str,
+        working_directory: Optional[str] = None
+    ) -> AICommandResult:
+        """
+        Execute Claude CLI command with specified agent and prompt.
+        
+        Args:
+            prompt: Formatted prompt for AI
+            agent: Agent name to use
+            working_directory: Working directory for command execution
+            
+        Returns:
+            AICommandResult with execution details
+        """
+        import time
+        start_time = time.time()
+        
+        try:
+            # Build command
+            cmd = [self.command]
+            
+            # Add agent if specified
+            if agent:
+                cmd.extend(["--agent", agent])
+            
+            # Add prompt
+            cmd.append(prompt)
+            
+            self.logger.debug(f"Executing AI command: {' '.join(cmd[:3])}... (prompt truncated)")
+            
+            # Execute command
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=working_directory,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                limit=1024 * 1024  # 1MB limit for output
+            )
+            
+            # Wait for completion with timeout
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self.config.timeout
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                await process.wait()
+                duration = time.time() - start_time
+                return AICommandResult(
+                    success=False,
+                    output="",
+                    error=f"AI command timed out after {self.config.timeout} seconds",
+                    exit_code=-1,
+                    duration=duration
+                )
+            
+            duration = time.time() - start_time
+            
+            output = stdout.decode('utf-8', errors='replace')
+            error = stderr.decode('utf-8', errors='replace')
+            
+            success = process.returncode == 0
+            
+            if not success:
+                self.logger.warning(f"AI command failed with exit code {process.returncode}")
+                self.logger.debug(f"Error output: {error}")
+            
+            return AICommandResult(
+                success=success,
+                output=output,
+                error=error,
+                exit_code=process.returncode or 0,
+                duration=duration
+            )
+            
+        except Exception as e:
+            duration = time.time() - start_time
+            self.logger.error(f"Failed to execute AI command: {e}")
+            return AICommandResult(
+                success=False,
+                output="",
+                error=str(e),
+                exit_code=-1,
+                duration=duration
+            )
+
+    def _format_implementation_prompt(
+        self, 
+        issue: Issue, 
+        worktree_path: str,
+        custom_prompt: Optional[str] = None
+    ) -> str:
+        """
+        Format implementation prompt with issue context and repository information.
+        
+        Args:
+            issue: Issue to implement
+            worktree_path: Path to worktree
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            Formatted prompt for AI implementation
         """
         if custom_prompt:
-            # Use custom prompt, still expand variables
-            base_prompt = custom_prompt
-        else:
-            base_prompt = self.config.implementation_prompt
+            # Use custom prompt but include basic issue context
+            context = f"Issue #{issue.id}: {issue.title}\n\n{issue.description}\n\n"
+            return context + custom_prompt
         
-        # Prepare context variables
-        context = {
-            "issue_id": issue.id,
-            "issue_title": issue.title,
-            "issue_description": issue.description,
-            "acceptance_criteria": self._extract_acceptance_criteria(issue.description),
-            "labels": ", ".join(issue.labels) if issue.labels else "None",
-            "assignee": issue.assignee or "None",
-            "repository": repository_context.get("name", "Unknown") if repository_context else "Unknown",
-            "branch": repository_context.get("branch", "main") if repository_context else "main"
-        }
+        # Use configured template with variable substitution
+        template = self.config.implementation_prompt
         
-        # Format prompt with context variables
-        try:
-            formatted_prompt = base_prompt.format(**context)
-        except KeyError as e:
-            # If variable is missing, provide a warning but continue
-            logger.warning(f"Missing variable in prompt template: {e}")
-            formatted_prompt = base_prompt
-        
-        # Add repository context if enabled
-        if self.include_file_context and repository_context:
-            formatted_prompt += self._add_repository_context(repository_context)
-        
-        # Add response format instructions for structured responses
-        if self.response_format == "structured":
-            formatted_prompt += self._add_structured_response_instructions()
-        
-        return formatted_prompt
-    
-    def _extract_acceptance_criteria(self, description: str) -> str:
-        """Extract acceptance criteria from issue description.
-        
-        Args:
-            description: Issue description
-            
-        Returns:
-            Extracted acceptance criteria or empty string
-        """
-        # Look for common acceptance criteria patterns
-        patterns = [
-            r"(?i)acceptance criteria:?\s*\n(.*?)(?=\n\s*\n|\n\s*#|\Z)",
-            r"(?i)ac:?\s*\n(.*?)(?=\n\s*\n|\n\s*#|\Z)",
-            r"(?i)requirements:?\s*\n(.*?)(?=\n\s*\n|\n\s*#|\Z)",
-            r"(?i)definition of done:?\s*\n(.*?)(?=\n\s*\n|\n\s*#|\Z)"
+        # Build context information
+        context_parts = [
+            f"Issue ID: {issue.id}",
+            f"Title: {issue.title}",
+            f"Description:\n{issue.description}",
         ]
         
-        for pattern in patterns:
-            match = re.search(pattern, description, re.MULTILINE | re.DOTALL)
-            if match:
-                return match.group(1).strip()
+        if issue.labels:
+            context_parts.append(f"Labels: {', '.join(issue.labels)}")
         
-        return ""
-    
-    def _add_repository_context(self, repository_context: Dict[str, Any]) -> str:
-        """Add repository context to prompt.
+        if issue.assignee:
+            context_parts.append(f"Assignee: {issue.assignee}")
+        
+        # Add repository context
+        repo_context = self._get_repository_context(worktree_path)
+        if repo_context:
+            context_parts.append(f"Repository Context:\n{repo_context}")
+        
+        context = "\n".join(context_parts)
+        
+        # Format template with variables
+        try:
+            formatted_prompt = template.format(
+                issue_id=issue.id,
+                title=issue.title,
+                description=issue.description,
+                context=context,
+                labels=", ".join(issue.labels) if issue.labels else "",
+                assignee=issue.assignee or ""
+            )
+        except KeyError as e:
+            self.logger.warning(f"Template variable {e} not found, using fallback")
+            formatted_prompt = f"{template}\n\n{context}"
+        
+        return formatted_prompt
+
+    def _format_review_prompt(
+        self, 
+        pr_number: int, 
+        repository: str,
+        custom_prompt: Optional[str] = None
+    ) -> str:
+        """Format review prompt for PR review."""
+        if custom_prompt:
+            return f"Review PR #{pr_number} in {repository}:\n\n{custom_prompt}"
+        
+        template = self.config.review_prompt
+        return f"Review PR #{pr_number} in {repository}:\n\n{template}"
+
+    def _format_update_prompt(
+        self, 
+        issue: Issue, 
+        review_comments: List[str],
+        custom_prompt: Optional[str] = None
+    ) -> str:
+        """Format update prompt to address review comments."""
+        comments_text = "\n".join(f"- {comment}" for comment in review_comments)
+        
+        if custom_prompt:
+            return f"Issue #{issue.id}: {issue.title}\n\nReview Comments:\n{comments_text}\n\n{custom_prompt}"
+        
+        template = self.config.update_prompt
+        try:
+            formatted_prompt = template.format(
+                issue_id=issue.id,
+                title=issue.title,
+                comments=comments_text
+            )
+        except KeyError:
+            formatted_prompt = f"{template}\n\nIssue #{issue.id}: {issue.title}\n\nReview Comments:\n{comments_text}"
+        
+        return formatted_prompt
+
+    def _parse_ai_response(self, output: str, response_type: str) -> AIResponse:
+        """
+        Parse AI response and extract actionable items.
         
         Args:
-            repository_context: Repository context information
+            output: Raw AI response output
+            response_type: Type of response (implementation, review, update)
             
         Returns:
-            Additional prompt content with repository context
-        """
-        context_lines = ["\n\n## Repository Context"]
-        
-        if "file_structure" in repository_context:
-            context_lines.append("### File Structure")
-            context_lines.append(repository_context["file_structure"])
-        
-        if "coding_standards" in repository_context:
-            context_lines.append("### Coding Standards")
-            context_lines.append(repository_context["coding_standards"])
-        
-        if "existing_patterns" in repository_context:
-            context_lines.append("### Existing Patterns")
-            context_lines.append(repository_context["existing_patterns"])
-        
-        return "\n".join(context_lines)
-    
-    def _add_structured_response_instructions(self) -> str:
-        """Add instructions for structured response format.
-        
-        Returns:
-            Instructions for Claude to provide structured output
-        """
-        return """
-
-## Response Format
-
-Please provide your response in the following structured format:
-
-**IMPLEMENTATION SUMMARY:**
-Brief description of what you implemented
-
-**FILES MODIFIED:**
-For each file changed, specify:
-- File path
-- Action (create/modify/delete)
-- Brief description of changes
-
-**COMMANDS TO RUN:**
-Any commands that should be executed after implementation (e.g., npm install, pip install, tests)
-
-**NOTES:**
-Any additional notes or considerations
-"""
-    
-    def parse_ai_response(self, raw_response: str) -> AIResponse:
-        """Parse AI response into structured format.
-        
-        Args:
-            raw_response: Raw response from Claude
-            
-        Returns:
-            Structured AI response
+            Structured AIResponse
         """
         try:
-            if self.response_format == "structured":
-                return self._parse_structured_response(raw_response)
-            else:
-                return self._parse_freeform_response(raw_response)
-        except Exception as e:
-            logger.error(f"Failed to parse AI response: {e}")
-            return AIResponse(
-                success=False,
-                error_message=f"Failed to parse AI response: {e}",
-                raw_output=raw_response
-            )
-    
-    def _parse_structured_response(self, raw_response: str) -> AIResponse:
-        """Parse structured AI response.
-        
-        Args:
-            raw_response: Raw structured response
+            # Try to parse as structured JSON first
+            if output.strip().startswith('{'):
+                try:
+                    data = json.loads(output)
+                    return AIResponse(
+                        success=True,
+                        response_type=response_type,
+                        content=data.get('content', output),
+                        file_changes=data.get('file_changes', []),
+                        commands=data.get('commands', []),
+                        metadata=data.get('metadata', {})
+                    )
+                except json.JSONDecodeError:
+                    pass
             
-        Returns:
-            Parsed AI response
-        """
-        file_changes = []
-        commands = []
-        summary = None
-        
-        try:
-            # Extract summary
-            summary_match = re.search(
-                r"\*\*IMPLEMENTATION SUMMARY:\*\*\s*\n(.*?)(?=\n\s*\*\*|\Z)",
-                raw_response,
-                re.MULTILINE | re.DOTALL
-            )
-            if summary_match:
-                summary = summary_match.group(1).strip()
-            
-            # Extract file changes
-            files_section = re.search(
-                r"\*\*FILES MODIFIED:\*\*\s*\n(.*?)(?=\n\s*\*\*|\Z)",
-                raw_response,
-                re.MULTILINE | re.DOTALL
-            )
-            if files_section:
-                files_text = files_section.group(1)
-                file_changes = self._parse_file_changes(files_text)
-            
-            # Extract commands
-            commands_section = re.search(
-                r"\*\*COMMANDS TO RUN:\*\*\s*\n(.*?)(?=\n\s*\*\*|\Z)",
-                raw_response,
-                re.MULTILINE | re.DOTALL
-            )
-            if commands_section:
-                commands_text = commands_section.group(1)
-                commands = self._parse_commands(commands_text)
+            # Parse freeform response
+            file_changes = self._extract_file_changes(output)
+            commands = self._extract_commands(output)
             
             return AIResponse(
                 success=True,
-                summary=summary,
+                response_type=response_type,
+                content=output,
                 file_changes=file_changes,
                 commands=commands,
-                raw_output=raw_response
+                metadata={}
             )
             
         except Exception as e:
-            logger.warning(f"Failed to parse structured response, falling back to freeform: {e}")
-            return self._parse_freeform_response(raw_response)
-    
-    def _parse_freeform_response(self, raw_response: str) -> AIResponse:
-        """Parse freeform AI response using heuristics.
-        
-        Args:
-            raw_response: Raw freeform response
-            
-        Returns:
-            Parsed AI response with basic structure
-        """
-        # For freeform responses, use simple heuristics
-        file_changes = []
-        commands = []
-        
-        # Look for common file patterns
-        file_patterns = [
-            r"(?:create|modify|update|edit)\s+(?:file\s+)?[`\"']?([^\s`\"'\n]+\.[a-zA-Z0-9]+)[`\"']?",
-            r"[`\"']([^\s`\"'\n]+\.[a-zA-Z0-9]+)[`\"']?\s+(?:file\s+)?(?:create|modify|update|edit)",
-        ]
-        
-        for pattern in file_patterns:
-            matches = re.findall(pattern, raw_response, re.IGNORECASE)
-            for match in matches:
-                if match not in [fc.path for fc in file_changes]:
-                    file_changes.append(AIFileChange(
-                        path=match,
-                        action="modify",  # Default to modify
-                        description="File mentioned in AI response"
-                    ))
-        
-        # Look for command patterns
-        command_patterns = [
-            r"(?:run|execute)\s+[`\"']([^`\"'\n]+)[`\"']",
-            r"[`\"']([^`\"'\n]*(?:npm|pip|yarn|go|cargo|mvn|gradle)[^`\"'\n]*)[`\"']",
-        ]
-        
-        for pattern in command_patterns:
-            matches = re.findall(pattern, raw_response, re.IGNORECASE)
-            for match in matches:
-                commands.append(AICommand(
-                    command=match,
-                    description="Command mentioned in AI response"
-                ))
-        
-        # Extract first paragraph as summary
-        lines = raw_response.strip().split('\n')
-        summary = None
-        for line in lines:
-            if line.strip():
-                summary = line.strip()
-                break
-        
-        return AIResponse(
-            success=True,
-            summary=summary,
-            file_changes=file_changes,
-            commands=commands,
-            raw_output=raw_response
-        )
-    
-    def _parse_file_changes(self, files_text: str) -> List[AIFileChange]:
-        """Parse file changes from structured text.
-        
-        Args:
-            files_text: Text containing file change descriptions
-            
-        Returns:
-            List of file changes
-        """
+            self.logger.error(f"Failed to parse AI response: {e}")
+            # Return basic response even if parsing fails
+            return AIResponse(
+                success=False,
+                response_type=response_type,
+                content=output,
+                file_changes=[],
+                commands=[],
+                metadata={"parse_error": str(e)}
+            )
+
+    def _extract_file_changes(self, output: str) -> List[Dict[str, str]]:
+        """Extract file changes from AI response text."""
         file_changes = []
         
-        # Look for bullet points or lines with file paths
-        lines = files_text.strip().split('\n')
+        # Look for common patterns indicating file changes
+        lines = output.split('\n')
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
-                continue
             
-            # Remove bullet points
-            line = re.sub(r'^[-*•]\s*', '', line)
+            # Pattern: "Modified: path/to/file.py"
+            if line.startswith(('Modified:', 'Created:', 'Updated:', 'Changed:')):
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    action = parts[0].lower()
+                    file_path = parts[1].strip()
+                    file_changes.append({
+                        'action': action,
+                        'path': file_path
+                    })
             
-            # Try to parse "path - action - description" format
-            parts = [p.strip() for p in line.split(' - ', 2)]
-            if len(parts) >= 2:
-                path = parts[0]
-                action = parts[1].lower()
-                description = parts[2] if len(parts) > 2 else None
-                
-                # Validate action
-                if action not in ['create', 'modify', 'delete', 'update', 'edit']:
-                    action = 'modify'  # Default
-                if action in ['update', 'edit']:
-                    action = 'modify'
-                
-                file_changes.append(AIFileChange(
-                    path=path,
-                    action=action,
-                    description=description
-                ))
-            else:
-                # Try to extract file path from line
-                # Look for file extensions
-                file_match = re.search(r'([^\s]+\.[a-zA-Z0-9]+)', line)
-                if file_match:
-                    file_changes.append(AIFileChange(
-                        path=file_match.group(1),
-                        action='modify',
-                        description=line
-                    ))
+            # Pattern: "- src/components/Button.tsx (modified)"
+            elif line.startswith('-') and ('(modified)' in line or '(created)' in line):
+                if '(modified)' in line:
+                    file_path = line.replace('-', '').replace('(modified)', '').strip()
+                    file_changes.append({'action': 'modified', 'path': file_path})
+                elif '(created)' in line:
+                    file_path = line.replace('-', '').replace('(created)', '').strip()
+                    file_changes.append({'action': 'created', 'path': file_path})
         
         return file_changes
-    
-    def _parse_commands(self, commands_text: str) -> List[AICommand]:
-        """Parse commands from structured text.
-        
-        Args:
-            commands_text: Text containing command descriptions
-            
-        Returns:
-            List of commands
-        """
+
+    def _extract_commands(self, output: str) -> List[str]:
+        """Extract commands from AI response text."""
         commands = []
         
-        lines = commands_text.strip().split('\n')
+        lines = output.split('\n')
+        in_code_block = False
+        
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
+            
+            # Check for code blocks
+            if line.startswith('```'):
+                in_code_block = not in_code_block
                 continue
             
-            # Remove bullet points
-            line = re.sub(r'^[-*•]\s*', '', line)
-            
-            # Look for commands in backticks or quotes
-            command_match = re.search(r'[`"\']([^`"\']+)[`"\']', line)
-            if command_match:
-                command = command_match.group(1)
-                description = re.sub(r'[`"\'][^`"\']+[`"\']', '', line).strip()
-                if description.startswith('- '):
-                    description = description[2:]
-                
-                commands.append(AICommand(
-                    command=command,
-                    description=description if description else None
-                ))
-            else:
-                # Assume the whole line is a command if it looks like one
-                if any(word in line.lower() for word in ['npm', 'pip', 'yarn', 'go', 'cargo', 'mvn', 'gradle', 'python', 'node']):
-                    commands.append(AICommand(
-                        command=line,
-                        description="Command from AI response"
-                    ))
+            # Extract commands from code blocks or command patterns
+            if in_code_block and line and not line.startswith('#'):
+                commands.append(line)
+            elif line.startswith('Run:') or line.startswith('Execute:'):
+                cmd = line.split(':', 1)[1].strip()
+                if cmd:
+                    commands.append(cmd)
         
         return commands
 
+    def _get_repository_context(self, worktree_path: str) -> str:
+        """Get repository context for AI prompts."""
+        try:
+            repo_path = Path(worktree_path)
+            if not repo_path.exists():
+                return ""
+            
+            context_parts = []
+            
+            # Add basic file structure
+            try:
+                result = subprocess.run(
+                    ["find", ".", "-type", "f", "-name", "*.py", "-o", "-name", "*.js", "-o", "-name", "*.ts", "-o", "-name", "*.tsx"],
+                    cwd=worktree_path,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    files = result.stdout.strip().split('\n')[:20]  # Limit to 20 files
+                    context_parts.append(f"Key files:\n" + "\n".join(files))
+            except (subprocess.TimeoutExpired, subprocess.SubprocessError):
+                pass
+            
+            # Add package.json or requirements.txt if present
+            for config_file in ["package.json", "requirements.txt", "pyproject.toml"]:
+                config_path = repo_path / config_file
+                if config_path.exists():
+                    try:
+                        content = config_path.read_text()[:500]  # First 500 chars
+                        context_parts.append(f"{config_file}:\n{content}")
+                    except Exception:
+                        pass
+            
+            return "\n\n".join(context_parts)
+        
+        except Exception as e:
+            self.logger.debug(f"Failed to get repository context: {e}")
+            return ""
 
-def execute_ai_command(
+    async def _validate_prerequisites(self) -> None:
+        """Validate AI prerequisites are met."""
+        # Check if Claude CLI is available
+        try:
+            result = await asyncio.create_subprocess_exec(
+                self.command, "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            await asyncio.wait_for(result.communicate(), timeout=10)
+            
+            if result.returncode != 0:
+                raise AIIntegrationError(f"Claude CLI not working properly (exit code: {result.returncode})")
+                
+        except (asyncio.TimeoutError, FileNotFoundError):
+            raise AIIntegrationError(f"Claude CLI not found or not responding. Please install and configure the claude command.")
+        
+        # Validate agent configuration
+        if not self.config.implementation_agent:
+            raise AIIntegrationError("Implementation agent not configured. Please set ai.implementation_agent in config.")
+
+
+class AIIntegrationError(Exception):
+    """Exception raised for AI integration errors."""
+    
+    def __init__(self, message: str, exit_code: Optional[int] = None):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+async def execute_ai_command(
+    config: AIConfig,
     prompt: str,
     agent: str,
-    config: AIConfig,
-    working_directory: Optional[str] = None,
-    additional_args: Optional[List[str]] = None
-) -> str:
-    """Execute Claude CLI command with specified agent.
+    working_directory: Optional[str] = None
+) -> AICommandResult:
+    """
+    Execute Claude CLI command with specified parameters.
+    
+    Convenience function for direct AI command execution without full integration setup.
     
     Args:
-        prompt: Prompt to send to Claude
-        agent: Agent name to use
         config: AI configuration
-        working_directory: Working directory for command execution
-        additional_args: Additional command-line arguments
+        prompt: Prompt to send to AI
+        agent: Agent name to use
+        working_directory: Working directory for command
         
     Returns:
-        Raw Claude response
-        
-    Raises:
-        AIError: If command fails
+        AICommandResult with execution details
     """
     integration = ClaudeIntegration(config)
-    integration.validate_ai_prerequisites()
-    return integration.execute_ai_command(prompt, agent, working_directory, additional_args)
+    return await integration._execute_ai_command(prompt, agent, working_directory)
 
 
 def format_implementation_prompt(
     issue: Issue,
-    config: AIConfig,
-    repository_context: Optional[Dict[str, Any]] = None,
-    custom_prompt: Optional[str] = None
+    worktree_path: str,
+    custom_prompt: Optional[str] = None,
+    config: Optional[AIConfig] = None
 ) -> str:
-    """Format implementation prompt with issue context.
+    """
+    Format implementation prompt for AI command.
+    
+    Convenience function for prompt formatting without full integration setup.
     
     Args:
         issue: Issue to implement
-        config: AI configuration
-        repository_context: Additional repository context
-        custom_prompt: Custom prompt override
+        worktree_path: Path to worktree
+        custom_prompt: Optional custom prompt
+        config: AI configuration (uses default if not provided)
         
     Returns:
-        Formatted prompt for Claude
+        Formatted prompt string
     """
+    from ..config import Config
+    
+    if not config:
+        app_config = Config()
+        config = app_config.ai
+    
     integration = ClaudeIntegration(config)
-    return integration.format_implementation_prompt(issue, repository_context, custom_prompt)
+    return integration._format_implementation_prompt(issue, worktree_path, custom_prompt)
 
 
-def parse_ai_response(raw_response: str, config: AIConfig) -> AIResponse:
-    """Parse AI response into structured format.
+def parse_ai_response(output: str, response_type: str = "implementation") -> AIResponse:
+    """
+    Parse AI response and extract actionable items.
+    
+    Convenience function for response parsing without full integration setup.
     
     Args:
-        raw_response: Raw response from Claude
-        config: AI configuration
+        output: Raw AI response output
+        response_type: Type of response
         
     Returns:
-        Structured AI response
+        Structured AIResponse
     """
+    from ..config import Config
+    
+    config = Config().ai
     integration = ClaudeIntegration(config)
-    return integration.parse_ai_response(raw_response)
+    return integration._parse_ai_response(output, response_type)
 
 
-def validate_ai_prerequisites(config: AIConfig) -> None:
-    """Validate AI prerequisites.
+async def validate_ai_prerequisites(config: AIConfig) -> None:
+    """
+    Validate AI prerequisites are met.
+    
+    Convenience function for prerequisite validation.
     
     Args:
         config: AI configuration
         
     Raises:
-        AIError: If prerequisites are not met
+        AIIntegrationError: If prerequisites are not met
     """
     integration = ClaudeIntegration(config)
-    integration.validate_ai_prerequisites()
+    await integration._validate_prerequisites()

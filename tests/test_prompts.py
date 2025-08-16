@@ -1,677 +1,512 @@
 """Tests for prompt management module."""
 
-import tempfile
-from pathlib import Path
-from unittest.mock import Mock, patch
-
 import pytest
 import yaml
+from pathlib import Path
+from unittest.mock import MagicMock, patch, mock_open
 
 from auto.integrations.prompts import (
-    PromptError,
     PromptManager,
     PromptTemplate,
-    expand_prompt_variables,
-    load_prompt_template,
+    PromptError,
     resolve_prompt,
+    load_prompt_template,
+    expand_prompt_variables,
+    list_available_templates
 )
-from auto.models import AIConfig, Issue, IssueProvider, IssueStatus
+from auto.models import Issue, IssueProvider, IssueStatus
 
 
 @pytest.fixture
-def ai_config():
-    """Create test AI configuration."""
-    return AIConfig(
-        prompt_templates_dir="~/.auto/prompts",
-        allow_custom_prompts=True,
-        default_template="implementation",
-        prompt_variables=[
-            "issue_id", "issue_title", "issue_description", "acceptance_criteria",
-            "repository", "branch", "labels", "assignee"
-        ]
-    )
-
-
-@pytest.fixture
-def test_issue():
-    """Create test issue."""
+def sample_issue():
+    """Sample issue for testing."""
     return Issue(
         id="#123",
         provider=IssueProvider.GITHUB,
         title="Add dark mode support",
-        description="""Add dark mode toggle to the application.
-
-Acceptance Criteria:
-- Users can toggle between light and dark themes
-- Theme preference is persisted in localStorage
-- All components support both themes""",
+        description="Implement a dark mode toggle for the application",
         status=IssueStatus.OPEN,
         labels=["feature", "ui"],
-        assignee="testuser"
+        assignee="developer"
     )
 
 
 @pytest.fixture
-def temp_templates_dir():
-    """Create temporary templates directory."""
-    with tempfile.TemporaryDirectory() as temp_dir:
-        templates_dir = Path(temp_dir) / "prompts"
-        templates_dir.mkdir()
-        yield templates_dir
+def prompt_manager():
+    """PromptManager instance for testing."""
+    return PromptManager()
 
 
 @pytest.fixture
 def sample_template():
-    """Create sample template."""
+    """Sample prompt template for testing."""
     return PromptTemplate(
         name="test-template",
-        description="Test template for testing",
-        prompt="Implement {issue_title} for issue {issue_id} in {repository}",
-        variables=["issue_id", "issue_title", "repository"],
-        tags=["test", "implementation"]
+        content="Implement {issue_title} with focus on {custom_focus}",
+        description="Test template",
+        variables=["issue_title", "custom_focus"],
+        metadata={"category": "implementation"}
     )
+
+
+class TestPromptTemplate:
+    """Test PromptTemplate dataclass."""
+
+    def test_init_with_defaults(self):
+        """Test PromptTemplate initialization with defaults."""
+        template = PromptTemplate(
+            name="test",
+            content="Test content"
+        )
+        
+        assert template.name == "test"
+        assert template.content == "Test content"
+        assert template.description == ""
+        assert template.variables == []
+        assert template.metadata == {}
+
+    def test_init_with_all_fields(self):
+        """Test PromptTemplate initialization with all fields."""
+        template = PromptTemplate(
+            name="test",
+            content="Test content",
+            description="Test description",
+            variables=["var1", "var2"],
+            metadata={"key": "value"}
+        )
+        
+        assert template.name == "test"
+        assert template.content == "Test content"
+        assert template.description == "Test description"
+        assert template.variables == ["var1", "var2"]
+        assert template.metadata == {"key": "value"}
 
 
 class TestPromptManager:
     """Test PromptManager class."""
-    
-    def test_init(self, ai_config):
+
+    def test_init(self):
         """Test PromptManager initialization."""
-        manager = PromptManager(ai_config)
+        manager = PromptManager()
+        assert manager.config_dir is None
+        assert manager._template_cache == {}
         
-        assert manager.config == ai_config
-        assert manager.allow_custom_prompts is True
-        assert manager.default_template == "implementation"
-        assert len(manager.available_variables) == 8
-    
-    def test_resolve_prompt_with_override(self, ai_config):
+        manager_with_config = PromptManager("/custom/config")
+        assert manager_with_config.config_dir == "/custom/config"
+
+    def test_resolve_prompt_with_override(self, prompt_manager, sample_issue):
         """Test prompt resolution with direct override."""
-        manager = PromptManager(ai_config)
+        override_prompt = "Custom implementation prompt"
         
-        result = manager.resolve_prompt(
-            prompt_override="Custom prompt text",
-            base_prompt="Default prompt"
+        result = prompt_manager.resolve_prompt(
+            issue=sample_issue,
+            prompt_override=override_prompt
         )
         
-        assert result == "Custom prompt text"
-    
-    def test_resolve_prompt_with_file(self, ai_config, temp_templates_dir):
+        assert result == override_prompt
+
+    def test_resolve_prompt_with_file(self, prompt_manager, sample_issue, tmp_path):
         """Test prompt resolution from file."""
-        manager = PromptManager(ai_config)
+        prompt_file = tmp_path / "custom_prompt.txt"
+        prompt_content = "Implement the feature with testing focus"
+        prompt_file.write_text(prompt_content)
         
-        # Create test prompt file
-        prompt_file = temp_templates_dir / "custom.txt"
-        prompt_file.write_text("Prompt from file content")
-        
-        result = manager.resolve_prompt(
-            prompt_file=str(prompt_file),
-            base_prompt="Default prompt"
+        result = prompt_manager.resolve_prompt(
+            issue=sample_issue,
+            prompt_file=str(prompt_file)
         )
         
-        assert result == "Prompt from file content"
-    
-    def test_resolve_prompt_with_template(self, ai_config):
-        """Test prompt resolution with named template."""
-        manager = PromptManager(ai_config)
-        
-        # Mock template loading
-        with patch.object(manager, 'load_prompt_template') as mock_load:
+        assert prompt_content in result
+
+    def test_resolve_prompt_with_template(self, prompt_manager, sample_issue):
+        """Test prompt resolution with template."""
+        with patch.object(prompt_manager, 'load_prompt_template') as mock_load:
             mock_template = PromptTemplate(
-                name="test",
-                prompt="Template prompt content",
-                variables=[]
+                name="security-focused",
+                content="Implement {issue_title} with security focus",
+                description="Security template"
             )
             mock_load.return_value = mock_template
             
-            result = manager.resolve_prompt(
-                prompt_template="test",
-                base_prompt="Default prompt"
+            result = prompt_manager.resolve_prompt(
+                issue=sample_issue,
+                prompt_template="security-focused"
             )
             
-            assert result == "Template prompt content"
-            mock_load.assert_called_once_with("test")
-    
-    def test_resolve_prompt_with_append(self, ai_config):
+            assert "Add dark mode support" in result
+            assert "security focus" in result
+            mock_load.assert_called_once_with("security-focused")
+
+    def test_resolve_prompt_with_append(self, prompt_manager, sample_issue):
         """Test prompt resolution with append text."""
-        manager = PromptManager(ai_config)
+        default_prompt = "Basic implementation"
+        append_text = "Make sure to add comprehensive tests"
         
-        result = manager.resolve_prompt(
-            prompt_override="Base prompt",
-            prompt_append="Additional instructions"
+        result = prompt_manager.resolve_prompt(
+            issue=sample_issue,
+            default_prompt=default_prompt,
+            prompt_append=append_text
         )
         
-        assert result == "Base prompt\n\nAdditional instructions"
-    
-    def test_resolve_prompt_fallback_to_base(self, ai_config):
-        """Test prompt resolution fallback to base prompt."""
-        manager = PromptManager(ai_config)
+        assert "Basic implementation" in result
+        assert "comprehensive tests" in result
+
+    def test_resolve_prompt_no_source(self, prompt_manager, sample_issue):
+        """Test prompt resolution with no source raises error."""
+        with pytest.raises(PromptError) as excinfo:
+            prompt_manager.resolve_prompt(issue=sample_issue)
         
-        result = manager.resolve_prompt(base_prompt="Default prompt")
+        assert "No prompt source provided" in str(excinfo.value)
+
+    def test_resolve_prompt_with_variables(self, prompt_manager, sample_issue):
+        """Test prompt resolution with custom variables."""
+        template_content = "Implement {issue_title} for {target_platform}"
+        variables = {"target_platform": "mobile"}
         
-        assert result == "Default prompt"
-    
-    def test_resolve_prompt_custom_disabled(self, ai_config):
-        """Test prompt resolution when custom prompts are disabled."""
-        ai_config.allow_custom_prompts = False
-        manager = PromptManager(ai_config)
-        
-        result = manager.resolve_prompt(
-            prompt_override="Custom prompt",
-            base_prompt="Default prompt"
+        result = prompt_manager.resolve_prompt(
+            issue=sample_issue,
+            prompt_override=template_content,
+            variables=variables
         )
-        
-        # Should use default prompt, not custom
-        assert result == "Default prompt"
-    
-    def test_load_prompt_from_file_success(self, ai_config, temp_templates_dir):
-        """Test loading prompt from file successfully."""
-        manager = PromptManager(ai_config)
-        
-        prompt_file = temp_templates_dir / "test.txt"
-        prompt_file.write_text("Test prompt content")
-        
-        result = manager._load_prompt_from_file(str(prompt_file))
-        
-        assert result == "Test prompt content"
-    
-    def test_load_prompt_from_file_not_found(self, ai_config):
-        """Test loading prompt from non-existent file."""
-        manager = PromptManager(ai_config)
-        
-        with pytest.raises(PromptError, match="Prompt file not found"):
-            manager._load_prompt_from_file("/nonexistent/file.txt")
-    
-    def test_load_prompt_from_file_empty(self, ai_config, temp_templates_dir):
-        """Test loading prompt from empty file."""
-        manager = PromptManager(ai_config)
-        
-        prompt_file = temp_templates_dir / "empty.txt"
-        prompt_file.write_text("")
-        
-        with pytest.raises(PromptError, match="Prompt file is empty"):
-            manager._load_prompt_from_file(str(prompt_file))
-    
-    def test_load_template_file_success(self, ai_config, temp_templates_dir):
-        """Test loading template from YAML file."""
-        manager = PromptManager(ai_config)
-        
-        template_data = {
-            "name": "test-template",
-            "description": "Test template",
-            "prompt": "Test prompt with {variable}",
-            "variables": ["variable"],
-            "tags": ["test"]
-        }
-        
-        template_file = temp_templates_dir / "test.yaml"
-        with open(template_file, 'w') as f:
-            yaml.safe_dump(template_data, f)
-        
-        template = manager._load_template_file(template_file, "test")
-        
-        assert template.name == "test-template"
-        assert template.description == "Test template"
-        assert template.prompt == "Test prompt with {variable}"
-        assert template.variables == ["variable"]
-        assert template.tags == ["test"]
-    
-    def test_load_template_file_missing_prompt(self, ai_config, temp_templates_dir):
-        """Test loading template file without prompt field."""
-        manager = PromptManager(ai_config)
-        
-        template_data = {"name": "test", "description": "Test"}
-        
-        template_file = temp_templates_dir / "invalid.yaml"
-        with open(template_file, 'w') as f:
-            yaml.safe_dump(template_data, f)
-        
-        with pytest.raises(PromptError, match="missing 'prompt' field"):
-            manager._load_template_file(template_file, "invalid")
-    
-    def test_load_template_file_invalid_yaml(self, ai_config, temp_templates_dir):
-        """Test loading template file with invalid YAML."""
-        manager = PromptManager(ai_config)
-        
-        template_file = temp_templates_dir / "invalid.yaml"
-        template_file.write_text("invalid: yaml: content:")
-        
-        with pytest.raises(PromptError, match="Invalid YAML"):
-            manager._load_template_file(template_file, "invalid")
-    
-    def test_load_template_file_sets_default_name(self, ai_config, temp_templates_dir):
-        """Test that template file loading sets default name."""
-        manager = PromptManager(ai_config)
-        
-        template_data = {"prompt": "Test prompt"}
-        
-        template_file = temp_templates_dir / "unnamed.yaml"
-        with open(template_file, 'w') as f:
-            yaml.safe_dump(template_data, f)
-        
-        template = manager._load_template_file(template_file, "test-name")
-        
-        assert template.name == "test-name"
-    
-    def test_load_builtin_template_implementation(self, ai_config):
-        """Test loading built-in implementation template."""
-        manager = PromptManager(ai_config)
-        
-        template = manager._load_builtin_template("implementation")
-        
-        assert template.name == "implementation"
-        assert "Implement the following issue" in template.prompt
-        assert "issue_description" in template.variables
-        assert "implementation" in template.tags
-    
-    def test_load_builtin_template_security(self, ai_config):
-        """Test loading built-in security template."""
-        manager = PromptManager(ai_config)
-        
-        template = manager._load_builtin_template("security-focused")
-        
-        assert template.name == "security-focused"
-        assert "security" in template.prompt.lower()
-        assert "OWASP" in template.prompt
-        assert "security" in template.tags
-    
-    def test_load_builtin_template_performance(self, ai_config):
-        """Test loading built-in performance template."""
-        manager = PromptManager(ai_config)
-        
-        template = manager._load_builtin_template("performance")
-        
-        assert template.name == "performance"
-        assert "performance" in template.prompt.lower()
-        assert "optimization" in template.tags
-    
-    def test_load_builtin_template_not_found(self, ai_config):
-        """Test loading non-existent built-in template."""
-        manager = PromptManager(ai_config)
-        
-        with pytest.raises(PromptError, match="Built-in template 'nonexistent' not found"):
-            manager._load_builtin_template("nonexistent")
-    
-    @patch('auto.integrations.prompts.get_git_root')
-    def test_load_prompt_template_search_order(self, mock_git_root, ai_config, temp_templates_dir):
-        """Test prompt template loading search order."""
-        # Mock git root to return a test directory
-        git_root = temp_templates_dir.parent / "git_root"
-        git_root.mkdir()
-        project_prompts = git_root / ".auto" / "prompts"
-        project_prompts.mkdir(parents=True)
-        mock_git_root.return_value = git_root
-        
-        # Set user templates directory
-        ai_config.prompt_templates_dir = str(temp_templates_dir)
-        manager = PromptManager(ai_config)
-        
-        # Create template in project directory (should be found first)
-        project_template_data = {
-            "name": "search-test",
-            "prompt": "Project template",
-            "variables": []
-        }
-        project_template_file = project_prompts / "search-test.yaml"
-        with open(project_template_file, 'w') as f:
-            yaml.safe_dump(project_template_data, f)
-        
-        # Create template in user directory
-        user_template_data = {
-            "name": "search-test",
-            "prompt": "User template",
-            "variables": []
-        }
-        user_template_file = temp_templates_dir / "search-test.yaml"
-        with open(user_template_file, 'w') as f:
-            yaml.safe_dump(user_template_data, f)
-        
-        template = manager.load_prompt_template("search-test")
-        
-        # Should load project template (higher priority)
-        assert template.prompt == "Project template"
-    
-    def test_load_prompt_template_fallback_to_builtin(self, ai_config):
-        """Test prompt template loading fallback to built-in."""
-        manager = PromptManager(ai_config)
-        
-        # Try to load built-in template when no custom templates exist
-        template = manager.load_prompt_template("implementation")
-        
-        assert template.name == "implementation"
-        assert "Implement the following issue" in template.prompt
-    
-    def test_load_prompt_template_not_found(self, ai_config):
-        """Test loading non-existent template."""
-        manager = PromptManager(ai_config)
-        
-        with pytest.raises(PromptError, match="Prompt template 'nonexistent' not found"):
-            manager.load_prompt_template("nonexistent")
-    
-    def test_load_prompt_template_caching(self, ai_config):
-        """Test that templates are cached after first load."""
-        manager = PromptManager(ai_config)
-        
-        # Load template twice
-        template1 = manager.load_prompt_template("implementation")
-        template2 = manager.load_prompt_template("implementation")
-        
-        # Should be the same instance (cached)
-        assert template1 is template2
-    
-    def test_expand_prompt_variables_basic(self, ai_config, test_issue):
-        """Test basic prompt variable expansion."""
-        manager = PromptManager(ai_config)
-        
-        prompt = "Issue {issue_id}: {issue_title} by {assignee}"
-        
-        result = manager.expand_prompt_variables(prompt, test_issue)
-        
-        assert result == "Issue #123: Add dark mode support by testuser"
-    
-    def test_expand_prompt_variables_with_repo_context(self, ai_config, test_issue):
-        """Test prompt variable expansion with repository context."""
-        manager = PromptManager(ai_config)
-        
-        prompt = "Implement {issue_title} in {repository} on {branch}"
-        repo_context = {"name": "my-project", "branch": "main"}
-        
-        result = manager.expand_prompt_variables(
-            prompt, test_issue, repository_context=repo_context
-        )
-        
-        assert result == "Implement Add dark mode support in my-project on main"
-    
-    def test_expand_prompt_variables_with_acceptance_criteria(self, ai_config, test_issue):
-        """Test prompt variable expansion with acceptance criteria."""
-        manager = PromptManager(ai_config)
-        
-        prompt = "Issue: {issue_title}\n\n{acceptance_criteria}"
-        
-        result = manager.expand_prompt_variables(prompt, test_issue)
         
         assert "Add dark mode support" in result
-        assert "Acceptance Criteria" in result
-        assert "Users can toggle between light and dark themes" in result
-    
-    def test_expand_prompt_variables_missing_variable(self, ai_config, test_issue):
-        """Test prompt variable expansion with missing variable."""
-        manager = PromptManager(ai_config)
-        
-        prompt = "Issue {issue_id} with {nonexistent_variable}"
-        
-        # Should not raise, but log warning
-        result = manager.expand_prompt_variables(prompt, test_issue)
-        
-        assert "#123" in result
-        # Missing variable should remain unexpanded
-        assert "{nonexistent_variable}" in result
-    
-    def test_expand_prompt_variables_with_custom_variables(self, ai_config, test_issue):
-        """Test prompt variable expansion with custom variables."""
-        manager = PromptManager(ai_config)
-        
-        prompt = "Issue {issue_id} priority: {priority}"
-        custom_vars = {"priority": "high"}
-        
-        result = manager.expand_prompt_variables(
-            prompt, test_issue, custom_variables=custom_vars
-        )
-        
-        assert result == "Issue #123 priority: high"
-    
-    def test_extract_acceptance_criteria_found(self, ai_config):
-        """Test acceptance criteria extraction when found."""
-        manager = PromptManager(ai_config)
-        
-        description = """Feature description.
+        assert "mobile" in result
 
-Acceptance Criteria:
-- Must work on mobile
-- Must be accessible
-- Must load in under 2s"""
+    def test_load_prompt_template_from_cache(self, prompt_manager):
+        """Test template loading from cache."""
+        cached_template = PromptTemplate(
+            name="cached",
+            content="Cached content"
+        )
+        prompt_manager._template_cache["cached"] = cached_template
         
-        result = manager._extract_acceptance_criteria(description)
+        result = prompt_manager.load_prompt_template("cached")
         
-        assert "## Acceptance Criteria" in result
-        assert "Must work on mobile" in result
-        assert "Must be accessible" in result
-        assert "Must load in under 2s" in result
-    
-    def test_extract_acceptance_criteria_not_found(self, ai_config):
-        """Test acceptance criteria extraction when not found."""
-        manager = PromptManager(ai_config)
+        assert result == cached_template
+
+    def test_load_prompt_template_from_file(self, prompt_manager, tmp_path):
+        """Test template loading from file."""
+        template_dir = tmp_path / "templates" / "prompts"
+        template_dir.mkdir(parents=True)
         
-        description = "Simple feature description without criteria."
-        
-        result = manager._extract_acceptance_criteria(description)
-        
-        assert result == ""
-    
-    def test_list_templates(self, ai_config, temp_templates_dir):
-        """Test listing available templates."""
-        # Set user templates directory
-        ai_config.prompt_templates_dir = str(temp_templates_dir)
-        manager = PromptManager(ai_config)
-        
-        # Create custom template
-        custom_template_data = {
-            "name": "custom",
-            "prompt": "Custom template",
-            "variables": []
+        template_file = template_dir / "test-template.yaml"
+        template_data = {
+            "description": "Test template",
+            "content": "Implement {issue_title} with focus",
+            "variables": ["issue_title"],
+            "metadata": {"category": "test"}
         }
-        custom_template_file = temp_templates_dir / "custom.yaml"
-        with open(custom_template_file, 'w') as f:
-            yaml.safe_dump(custom_template_data, f)
+        template_file.write_text(yaml.dump(template_data))
         
-        templates = manager.list_templates()
+        with patch.object(prompt_manager, '_get_template_search_paths', return_value=[template_dir]):
+            result = prompt_manager.load_prompt_template("test-template")
         
-        # Should include built-in templates
-        template_names = [t.name for t in templates]
-        assert "implementation" in template_names
-        assert "security-focused" in template_names
-        assert "performance" in template_names
-        assert "custom" in template_names
-    
-    def test_validate_template_success(self, ai_config, sample_template):
-        """Test successful template validation."""
-        manager = PromptManager(ai_config)
-        
-        warnings = manager.validate_template(sample_template)
-        
-        assert warnings == []
-    
-    def test_validate_template_unknown_variable(self, ai_config):
-        """Test template validation with unknown variable."""
-        manager = PromptManager(ai_config)
-        
-        template = PromptTemplate(
-            name="test",
-            prompt="Use {unknown_variable} in implementation",
-            variables=["unknown_variable"]
-        )
-        
-        warnings = manager.validate_template(template)
-        
-        assert len(warnings) == 1
-        assert "Variable 'unknown_variable' not in available variables" in warnings[0]
-    
-    def test_validate_template_unused_variable(self, ai_config):
-        """Test template validation with unused declared variable."""
-        manager = PromptManager(ai_config)
-        
-        template = PromptTemplate(
-            name="test",
-            prompt="Simple prompt without variables",
-            variables=["unused_variable"]
-        )
-        
-        warnings = manager.validate_template(template)
-        
-        assert len(warnings) == 1
-        assert "Declared variable 'unused_variable' not used" in warnings[0]
-    
-    def test_validate_template_short_prompt(self, ai_config):
-        """Test template validation with very short prompt."""
-        manager = PromptManager(ai_config)
-        
-        template = PromptTemplate(
-            name="test",
-            prompt="Short",
-            variables=[]
-        )
-        
-        warnings = manager.validate_template(template)
-        
-        assert len(warnings) == 1
-        assert "very short" in warnings[0]
-    
-    def test_validate_template_long_prompt(self, ai_config):
-        """Test template validation with very long prompt."""
-        manager = PromptManager(ai_config)
-        
-        template = PromptTemplate(
-            name="test",
-            prompt="x" * 6000,  # Very long prompt
-            variables=[]
-        )
-        
-        warnings = manager.validate_template(template)
-        
-        assert len(warnings) == 1
-        assert "very long" in warnings[0]
-    
-    @patch('auto.integrations.prompts.get_git_root')
-    def test_create_template_directory_project(self, mock_git_root, ai_config, temp_templates_dir):
-        """Test creating project template directory."""
-        git_root = temp_templates_dir.parent / "git_root"
-        git_root.mkdir()
-        mock_git_root.return_value = git_root
-        
-        manager = PromptManager(ai_config)
-        
-        created_dir = manager.create_template_directory(user_level=False)
-        
-        expected_dir = git_root / ".auto" / "prompts"
-        assert created_dir == expected_dir
-        assert created_dir.exists()
-    
-    def test_create_template_directory_user(self, ai_config, temp_templates_dir):
-        """Test creating user template directory."""
-        ai_config.prompt_templates_dir = str(temp_templates_dir / "new_prompts")
-        manager = PromptManager(ai_config)
-        
-        created_dir = manager.create_template_directory(user_level=True)
-        
-        assert created_dir.exists()
-        assert created_dir.name == "new_prompts"
+        assert result.name == "test-template"
+        assert result.content == "Implement {issue_title} with focus"
+        assert result.description == "Test template"
+        assert result.variables == ["issue_title"]
+        assert result.metadata == {"category": "test"}
 
+    def test_load_prompt_template_not_found(self, prompt_manager):
+        """Test template loading when template not found."""
+        with patch.object(prompt_manager, '_get_template_search_paths', return_value=[]):
+            with pytest.raises(PromptError) as excinfo:
+                prompt_manager.load_prompt_template("nonexistent")
+        
+        assert "Template 'nonexistent' not found" in str(excinfo.value)
 
-class TestPromptFunctions:
-    """Test prompt management module functions."""
-    
-    @patch('auto.integrations.prompts.PromptManager')
-    def test_resolve_prompt(self, mock_manager_class, ai_config):
-        """Test resolve_prompt function."""
-        mock_manager = Mock()
-        mock_manager.resolve_prompt.return_value = "resolved prompt"
-        mock_manager_class.return_value = mock_manager
+    def test_expand_prompt_variables(self, prompt_manager, sample_issue):
+        """Test prompt variable expansion."""
+        prompt = "Issue: {issue_id} - {issue_title} ({issue_labels})"
         
-        result = resolve_prompt(
-            ai_config,
-            prompt_override="custom",
-            prompt_append="additional"
-        )
-        
-        assert result == "resolved prompt"
-        mock_manager.resolve_prompt.assert_called_once_with(
-            prompt_override="custom",
-            prompt_file=None,
-            prompt_template=None,
-            prompt_append="additional",
-            base_prompt=None
-        )
-    
-    @patch('auto.integrations.prompts.PromptManager')
-    def test_load_prompt_template(self, mock_manager_class, ai_config, sample_template):
-        """Test load_prompt_template function."""
-        mock_manager = Mock()
-        mock_manager.load_prompt_template.return_value = sample_template
-        mock_manager_class.return_value = mock_manager
-        
-        result = load_prompt_template(ai_config, "test-template")
-        
-        assert result == sample_template
-        mock_manager.load_prompt_template.assert_called_once_with("test-template")
-    
-    @patch('auto.integrations.prompts.PromptManager')
-    def test_expand_prompt_variables(self, mock_manager_class, ai_config, test_issue):
-        """Test expand_prompt_variables function."""
-        mock_manager = Mock()
-        mock_manager.expand_prompt_variables.return_value = "expanded prompt"
-        mock_manager_class.return_value = mock_manager
-        
-        result = expand_prompt_variables(
-            "prompt {variable}",
-            test_issue,
-            ai_config,
-            repository_context={"name": "test"}
-        )
-        
-        assert result == "expanded prompt"
-        mock_manager.expand_prompt_variables.assert_called_once_with(
-            prompt="prompt {variable}",
-            issue=test_issue,
-            repository_context={"name": "test"},
-            custom_variables=None
-        )
-
-
-class TestPromptEdgeCases:
-    """Test edge cases and error conditions."""
-    
-    def test_prompt_manager_with_no_templates_dir(self, ai_config):
-        """Test PromptManager when templates directory doesn't exist."""
-        ai_config.prompt_templates_dir = "/nonexistent/path"
-        manager = PromptManager(ai_config)
-        
-        # Should still work, just fall back to built-in templates
-        template = manager.load_prompt_template("implementation")
-        assert template.name == "implementation"
-    
-    def test_expand_variables_with_none_values(self, ai_config):
-        """Test variable expansion with None values in issue."""
-        manager = PromptManager(ai_config)
-        
-        issue = Issue(
-            id="#123",
-            provider=IssueProvider.GITHUB,
-            title="Test",
-            description="Test",
-            status=IssueStatus.OPEN,
-            assignee=None,  # None value
-            labels=[]  # Empty list
-        )
-        
-        prompt = "Issue {issue_id} by {assignee} with labels {labels}"
-        
-        result = manager.expand_prompt_variables(prompt, issue)
+        result = prompt_manager.expand_prompt_variables(prompt, sample_issue)
         
         assert "#123" in result
-        assert "None" in result  # None should be converted to "None"
-    
-    def test_template_validation_edge_cases(self, ai_config):
-        """Test template validation edge cases."""
-        manager = PromptManager(ai_config)
+        assert "Add dark mode support" in result
+        assert "feature, ui" in result
+
+    def test_expand_prompt_variables_with_additional(self, prompt_manager, sample_issue):
+        """Test prompt variable expansion with additional variables."""
+        prompt = "Issue: {issue_title} for {platform}"
+        additional_vars = {"platform": "web"}
         
-        # Template with variable in nested braces
-        template = PromptTemplate(
-            name="edge-case",
-            prompt="Use {{issue_id}} for ID and {issue_title} for title",
-            variables=["issue_id", "issue_title"]
+        result = prompt_manager.expand_prompt_variables(
+            prompt, 
+            sample_issue, 
+            additional_vars
         )
         
-        warnings = manager.validate_template(template)
+        assert "Add dark mode support" in result
+        assert "web" in result
+
+    def test_expand_prompt_variables_missing_variable(self, prompt_manager, sample_issue):
+        """Test prompt variable expansion with missing variable."""
+        prompt = "Issue: {issue_title} - {missing_var}"
         
-        # Should detect that issue_id is not actually used (due to double braces)
-        warning_text = " ".join(warnings)
-        assert "not used" in warning_text or len(warnings) == 0  # Depending on regex behavior
+        # Should not raise, should handle gracefully
+        result = prompt_manager.expand_prompt_variables(prompt, sample_issue)
+        
+        assert "Add dark mode support" in result
+        assert "[missing_var]" in result or "missing_var" in result
+
+    def test_list_available_templates(self, prompt_manager, tmp_path):
+        """Test listing available templates."""
+        template_dir = tmp_path / "templates" / "prompts"
+        template_dir.mkdir(parents=True)
+        
+        (template_dir / "template1.yaml").write_text("content: test1")
+        (template_dir / "template2.yaml").write_text("content: test2")
+        (template_dir / "not-yaml.txt").write_text("not a template")
+        
+        with patch.object(prompt_manager, '_get_template_search_paths', return_value=[template_dir]):
+            templates = prompt_manager.list_available_templates()
+        
+        assert "template1" in templates
+        assert "template2" in templates
+        assert "not-yaml" not in templates
+        assert len(templates) == 2
+
+    def test_validate_template_exists(self, prompt_manager):
+        """Test template validation for existing template."""
+        with patch.object(prompt_manager, 'load_prompt_template') as mock_load:
+            mock_load.return_value = PromptTemplate(name="test", content="test")
+            
+            assert prompt_manager.validate_template("test") is True
+            mock_load.assert_called_once_with("test")
+
+    def test_validate_template_not_exists(self, prompt_manager):
+        """Test template validation for non-existing template."""
+        with patch.object(prompt_manager, 'load_prompt_template', side_effect=PromptError("Not found")):
+            
+            assert prompt_manager.validate_template("nonexistent") is False
+
+    def test_create_template(self, prompt_manager, tmp_path):
+        """Test template creation."""
+        with patch.object(prompt_manager, '_get_user_templates_dir', return_value=tmp_path):
+            template_file = prompt_manager.create_template(
+                "new-template",
+                "Implement {issue_title} carefully",
+                "Careful implementation template"
+            )
+            
+            assert template_file.exists()
+            assert template_file.name == "new-template.yaml"
+            
+            # Verify content
+            with open(template_file) as f:
+                data = yaml.safe_load(f)
+            
+            assert data["description"] == "Careful implementation template"
+            assert data["content"] == "Implement {issue_title} carefully"
+            assert "issue_title" in data["variables"]
+
+    def test_load_prompt_from_file(self, prompt_manager, tmp_path):
+        """Test loading prompt from file."""
+        prompt_file = tmp_path / "prompt.txt"
+        prompt_content = "Custom prompt content"
+        prompt_file.write_text(prompt_content)
+        
+        result = prompt_manager._load_prompt_from_file(str(prompt_file))
+        
+        assert result == prompt_content
+
+    def test_load_prompt_from_file_not_found(self, prompt_manager):
+        """Test loading prompt from non-existent file."""
+        with pytest.raises(PromptError) as excinfo:
+            prompt_manager._load_prompt_from_file("/nonexistent/file.txt")
+        
+        assert "Prompt file not found" in str(excinfo.value)
+
+    def test_load_prompt_from_file_empty(self, prompt_manager, tmp_path):
+        """Test loading prompt from empty file."""
+        prompt_file = tmp_path / "empty.txt"
+        prompt_file.write_text("")
+        
+        with pytest.raises(PromptError) as excinfo:
+            prompt_manager._load_prompt_from_file(str(prompt_file))
+        
+        assert "Prompt file is empty" in str(excinfo.value)
+
+    def test_load_template_file_invalid_yaml(self, prompt_manager, tmp_path):
+        """Test loading template with invalid YAML."""
+        template_file = tmp_path / "invalid.yaml"
+        template_file.write_text("invalid: yaml: content:")
+        
+        with pytest.raises(PromptError) as excinfo:
+            prompt_manager._load_template_file(template_file)
+        
+        assert "Invalid YAML" in str(excinfo.value)
+
+    def test_load_template_file_missing_content(self, prompt_manager, tmp_path):
+        """Test loading template without content field."""
+        template_file = tmp_path / "no-content.yaml"
+        template_data = {"description": "No content"}
+        template_file.write_text(yaml.dump(template_data))
+        
+        with pytest.raises(PromptError) as excinfo:
+            prompt_manager._load_template_file(template_file)
+        
+        assert "missing 'content' field" in str(excinfo.value)
+
+    def test_get_template_search_paths(self, prompt_manager):
+        """Test template search paths generation."""
+        with patch.object(prompt_manager, '_get_project_templates_dir', return_value=Path("/project")), \
+             patch.object(prompt_manager, '_get_user_templates_dir', return_value=Path("/user")), \
+             patch.object(prompt_manager, '_get_builtin_templates_dir', return_value=Path("/builtin")):
+            
+            paths = prompt_manager._get_template_search_paths()
+            
+            assert len(paths) == 3
+            assert paths[0] == Path("/project")  # Highest precedence
+            assert paths[1] == Path("/user")
+            assert paths[2] == Path("/builtin")   # Lowest precedence
+
+    def test_get_project_templates_dir_with_config(self, prompt_manager):
+        """Test project templates directory with config."""
+        prompt_manager.config_dir = "/custom/config"
+        
+        result = prompt_manager._get_project_templates_dir()
+        
+        assert result == Path("/custom/config/templates/prompts")
+
+    def test_get_project_templates_dir_auto_detect(self, prompt_manager, tmp_path):
+        """Test project templates directory auto-detection."""
+        # Create .auto directory
+        auto_dir = tmp_path / ".auto"
+        auto_dir.mkdir()
+        
+        with patch('pathlib.Path.cwd', return_value=tmp_path):
+            result = prompt_manager._get_project_templates_dir()
+        
+        assert result == auto_dir / "templates" / "prompts"
+
+    def test_get_user_templates_dir(self, prompt_manager):
+        """Test user templates directory."""
+        with patch('pathlib.Path.home', return_value=Path("/home/user")):
+            result = prompt_manager._get_user_templates_dir()
+        
+        assert result == Path("/home/user/.auto/templates/prompts")
+
+    def test_get_builtin_templates_dir(self, prompt_manager):
+        """Test builtin templates directory."""
+        result = prompt_manager._get_builtin_templates_dir()
+        
+        # Should be relative to the prompts.py file
+        assert "auto/templates/prompts" in str(result)
+
+    def test_build_variable_context(self, prompt_manager, sample_issue):
+        """Test variable context building."""
+        additional_vars = {"custom_var": "custom_value"}
+        
+        context = prompt_manager._build_variable_context(sample_issue, additional_vars)
+        
+        assert context["issue_id"] == "#123"
+        assert context["issue_title"] == "Add dark mode support"
+        assert context["issue_description"] == sample_issue.description
+        assert context["issue_labels"] == "feature, ui"
+        assert context["issue_assignee"] == "developer"
+        assert context["custom_var"] == "custom_value"
+
+    def test_safe_format_success(self, prompt_manager):
+        """Test safe formatting with all variables available."""
+        template = "Issue {issue_id}: {title}"
+        variables = {"issue_id": "#123", "title": "Test"}
+        
+        result = prompt_manager._safe_format(template, variables)
+        
+        assert result == "Issue #123: Test"
+
+    def test_safe_format_missing_variable(self, prompt_manager):
+        """Test safe formatting with missing variable."""
+        template = "Issue {issue_id}: {missing_var}"
+        variables = {"issue_id": "#123"}
+        
+        result = prompt_manager._safe_format(template, variables)
+        
+        assert "#123" in result
+        assert "[missing_var]" in result or "missing_var" in result
+
+    def test_regex_format(self, prompt_manager):
+        """Test regex-based formatting."""
+        template = "Issue {issue_id}: {title} - {missing}"
+        variables = {"issue_id": "#123", "title": "Test"}
+        
+        result = prompt_manager._regex_format(template, variables)
+        
+        assert result == "Issue #123: Test - [missing]"
+
+    def test_extract_template_variables(self, prompt_manager):
+        """Test template variable extraction."""
+        content = "Implement {issue_title} for {platform} with {focus}"
+        
+        variables = prompt_manager._extract_template_variables(content)
+        
+        assert variables == ["focus", "issue_title", "platform"]  # Sorted
+
+
+class TestConvenienceFunctions:
+    """Test convenience functions."""
+
+    def test_resolve_prompt(self, sample_issue):
+        """Test resolve_prompt convenience function."""
+        with patch('auto.integrations.prompts.PromptManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.resolve_prompt.return_value = "resolved prompt"
+            mock_manager_class.return_value = mock_manager
+            
+            result = resolve_prompt(
+                issue=sample_issue,
+                prompt_override="test prompt"
+            )
+            
+            assert result == "resolved prompt"
+            mock_manager.resolve_prompt.assert_called_once()
+
+    def test_load_prompt_template(self):
+        """Test load_prompt_template convenience function."""
+        with patch('auto.integrations.prompts.PromptManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_template = PromptTemplate(name="test", content="test")
+            mock_manager.load_prompt_template.return_value = mock_template
+            mock_manager_class.return_value = mock_manager
+            
+            result = load_prompt_template("test-template")
+            
+            assert result == mock_template
+            mock_manager.load_prompt_template.assert_called_once_with("test-template")
+
+    def test_expand_prompt_variables(self, sample_issue):
+        """Test expand_prompt_variables convenience function."""
+        with patch('auto.integrations.prompts.PromptManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.expand_prompt_variables.return_value = "expanded prompt"
+            mock_manager_class.return_value = mock_manager
+            
+            result = expand_prompt_variables(
+                "Test {issue_title}",
+                sample_issue
+            )
+            
+            assert result == "expanded prompt"
+            mock_manager.expand_prompt_variables.assert_called_once()
+
+    def test_list_available_templates(self):
+        """Test list_available_templates convenience function."""
+        with patch('auto.integrations.prompts.PromptManager') as mock_manager_class:
+            mock_manager = MagicMock()
+            mock_manager.list_available_templates.return_value = ["template1", "template2"]
+            mock_manager_class.return_value = mock_manager
+            
+            result = list_available_templates()
+            
+            assert result == ["template1", "template2"]
+            mock_manager.list_available_templates.assert_called_once()
+
+
+class TestPromptError:
+    """Test PromptError exception."""
+
+    def test_prompt_error(self):
+        """Test PromptError exception."""
+        error = PromptError("Test error message")
+        assert str(error) == "Test error message"

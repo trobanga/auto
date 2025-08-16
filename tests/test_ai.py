@@ -1,542 +1,490 @@
 """Tests for AI integration module."""
 
-import os
-import subprocess
-import tempfile
-from pathlib import Path
-from unittest.mock import MagicMock, Mock, patch
-
+import asyncio
+import json
 import pytest
+import anyio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 
 from auto.integrations.ai import (
-    AIError,
     ClaudeIntegration,
+    AICommandResult,
+    AIIntegrationError,
     execute_ai_command,
     format_implementation_prompt,
     parse_ai_response,
-    validate_ai_prerequisites,
+    validate_ai_prerequisites
 )
-from auto.models import AIConfig, AIResponse, Issue, IssueProvider, IssueStatus
+from auto.models import AIConfig, Issue, IssueProvider, IssueStatus, AIResponse
 
 
 @pytest.fixture
 def ai_config():
-    """Create test AI configuration."""
+    """AI configuration for testing."""
     return AIConfig(
         command="claude",
         implementation_agent="coder",
         review_agent="pull-request-reviewer",
         update_agent="coder",
-        timeout=60,
-        max_retries=1,
-        response_format="structured"
+        implementation_prompt="Implement this issue: {description}",
+        review_prompt="Review this PR for issues",
+        update_prompt="Address these comments: {comments}",
+        timeout=30
     )
 
 
 @pytest.fixture
-def test_issue():
-    """Create test issue."""
+def sample_issue():
+    """Sample issue for testing."""
     return Issue(
         id="#123",
         provider=IssueProvider.GITHUB,
         title="Add dark mode support",
-        description="""Add dark mode toggle to the application.
-
-Acceptance Criteria:
-- Users can toggle between light and dark themes
-- Theme preference is persisted in localStorage
-- All components support both themes
-- Smooth transition between themes""",
+        description="Implement a dark mode toggle for the application",
         status=IssueStatus.OPEN,
         labels=["feature", "ui"],
-        assignee="testuser"
+        assignee="developer"
     )
+
+
+@pytest.fixture
+def claude_integration(ai_config):
+    """ClaudeIntegration instance for testing."""
+    return ClaudeIntegration(ai_config)
 
 
 class TestClaudeIntegration:
     """Test ClaudeIntegration class."""
-    
+
     def test_init(self, ai_config):
         """Test ClaudeIntegration initialization."""
         integration = ClaudeIntegration(ai_config)
-        
         assert integration.config == ai_config
         assert integration.command == "claude"
-        assert integration.implementation_agent == "coder"
-        assert integration.timeout == 60
-        assert integration.max_retries == 1
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_validate_ai_prerequisites_success(self, mock_run_command, ai_config):
-        """Test successful AI prerequisites validation."""
-        # Mock successful claude --version command
-        mock_run_command.return_value = Mock(
-            returncode=0,
-            stdout="claude version 1.0.0",
-            stderr=""
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        
-        # Should not raise
-        integration.validate_ai_prerequisites()
-        
-        mock_run_command.assert_called_once_with(
-            ["claude", "--version"],
-            capture_output=True,
-            timeout=10
-        )
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_validate_ai_prerequisites_claude_not_available(self, mock_run_command, ai_config):
-        """Test AI prerequisites validation when Claude CLI is not available."""
-        # Mock failed claude --version command
-        mock_run_command.return_value = Mock(
-            returncode=1,
-            stdout="",
-            stderr="command not found"
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        
-        with pytest.raises(AIError, match="Claude CLI not available"):
-            integration.validate_ai_prerequisites()
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_validate_ai_prerequisites_timeout(self, mock_run_command, ai_config):
-        """Test AI prerequisites validation timeout."""
-        # Mock timeout exception
-        mock_run_command.side_effect = subprocess.TimeoutExpired("claude", 10)
-        
-        integration = ClaudeIntegration(ai_config)
-        
-        with pytest.raises(AIError, match="Claude CLI command timed out"):
-            integration.validate_ai_prerequisites()
-    
-    def test_validate_ai_prerequisites_invalid_agent(self):
-        """Test AI prerequisites validation with invalid agent."""
-        config = AIConfig(implementation_agent="")
-        integration = ClaudeIntegration(config)
-        
-        with pytest.raises(AIError, match="Invalid agent configuration"):
-            integration.validate_ai_prerequisites()
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_success(self, mock_run_command, ai_config):
-        """Test successful AI command execution."""
-        # Mock successful command execution
-        mock_run_command.return_value = Mock(
-            returncode=0,
-            stdout="AI response here",
-            stderr=""
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        result = integration.execute_ai_command("test prompt", "coder")
-        
-        assert result == "AI response here"
-        mock_run_command.assert_called_once_with(
-            ["claude", "--agent", "coder", "test prompt"],
-            capture_output=True,
-            timeout=60,
-            cwd=None,
-            input=None
-        )
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_long_prompt_uses_stdin(self, mock_run_command, ai_config):
-        """Test AI command execution with long prompt uses stdin."""
-        # Mock successful command execution
-        mock_run_command.return_value = Mock(
-            returncode=0,
-            stdout="AI response here",
-            stderr=""
-        )
-        
-        long_prompt = "x" * 1500  # Longer than 1000 chars
-        
-        integration = ClaudeIntegration(ai_config)
-        result = integration.execute_ai_command(long_prompt, "coder")
-        
-        assert result == "AI response here"
-        mock_run_command.assert_called_once_with(
-            ["claude", "--agent", "coder"],
-            capture_output=True,
-            timeout=60,
-            cwd=None,
-            input=long_prompt
-        )
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_with_working_directory(self, mock_run_command, ai_config):
-        """Test AI command execution with working directory."""
-        mock_run_command.return_value = Mock(
-            returncode=0,
-            stdout="AI response",
-            stderr=""
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        result = integration.execute_ai_command(
-            "test prompt",
-            "coder",
-            working_directory="/tmp/test"
-        )
-        
-        assert result == "AI response"
-        mock_run_command.assert_called_once_with(
-            ["claude", "--agent", "coder", "test prompt"],
-            capture_output=True,
-            timeout=60,
-            cwd="/tmp/test",
-            input=None
-        )
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_failure(self, mock_run_command, ai_config):
-        """Test AI command execution failure."""
-        # Mock failed command execution
-        mock_run_command.return_value = Mock(
-            returncode=1,
-            stdout="",
-            stderr="Agent not found"
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        
-        with pytest.raises(AIError, match="Claude CLI failed: Agent not found"):
-            integration.execute_ai_command("test prompt", "invalid-agent")
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_timeout(self, mock_run_command, ai_config):
-        """Test AI command execution timeout."""
-        # Mock timeout exception
-        mock_run_command.side_effect = subprocess.TimeoutExpired("claude", 60)
-        
-        integration = ClaudeIntegration(ai_config)
-        
-        with pytest.raises(AIError, match="Claude CLI command timed out"):
-            integration.execute_ai_command("test prompt", "coder")
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_retries(self, mock_run_command, ai_config):
-        """Test AI command execution with retries."""
-        # First call fails, second succeeds
-        mock_run_command.side_effect = [
-            Mock(returncode=1, stdout="", stderr="Temporary error"),
-            Mock(returncode=0, stdout="Success", stderr="")
-        ]
-        
-        integration = ClaudeIntegration(ai_config)
-        result = integration.execute_ai_command("test prompt", "coder")
-        
-        assert result == "Success"
-        assert mock_run_command.call_count == 2
-    
-    def test_format_implementation_prompt_basic(self, ai_config, test_issue):
-        """Test basic implementation prompt formatting."""
-        integration = ClaudeIntegration(ai_config)
-        
-        prompt = integration.format_implementation_prompt(test_issue)
-        
-        assert "#123" in prompt
-        assert "Add dark mode support" in prompt
-        assert "Users can toggle between light and dark themes" in prompt
-        assert "feature, ui" in prompt
-        assert "testuser" in prompt
-    
-    def test_format_implementation_prompt_with_custom_prompt(self, ai_config, test_issue):
-        """Test implementation prompt formatting with custom prompt."""
-        integration = ClaudeIntegration(ai_config)
-        custom_prompt = "Custom implementation prompt for {issue_title} ({issue_id})"
-        
-        prompt = integration.format_implementation_prompt(
-            test_issue,
-            custom_prompt=custom_prompt
-        )
-        
-        assert "Custom implementation prompt for Add dark mode support (#123)" in prompt
-    
-    def test_format_implementation_prompt_with_repository_context(self, ai_config, test_issue):
-        """Test implementation prompt formatting with repository context."""
-        integration = ClaudeIntegration(ai_config)
-        repo_context = {
-            "name": "my-project",
-            "branch": "feature-branch",
-            "file_structure": "src/\n  components/\n  utils/",
-            "coding_standards": "Use TypeScript and ESLint"
-        }
-        
-        prompt = integration.format_implementation_prompt(
-            test_issue,
-            repository_context=repo_context
-        )
-        
-        assert "my-project" in prompt
-        assert "feature-branch" in prompt
-        assert "File Structure" in prompt
-        assert "src/" in prompt
-        assert "Coding Standards" in prompt
-        assert "TypeScript" in prompt
-    
-    def test_extract_acceptance_criteria(self, ai_config):
-        """Test acceptance criteria extraction."""
-        integration = ClaudeIntegration(ai_config)
-        
-        description = """Feature description here.
 
-Acceptance Criteria:
-- Criterion 1
-- Criterion 2
-- Criterion 3
-
-Additional notes."""
-        
-        criteria = integration._extract_acceptance_criteria(description)
-        assert "Criterion 1" in criteria
-        assert "Criterion 2" in criteria
-        assert "Criterion 3" in criteria
-    
-    def test_extract_acceptance_criteria_alternative_format(self, ai_config):
-        """Test acceptance criteria extraction with alternative formats."""
-        integration = ClaudeIntegration(ai_config)
-        
-        # Test with "AC:" format
-        description = """Feature description.
-
-AC:
-- Must do this
-- Must do that"""
-        
-        criteria = integration._extract_acceptance_criteria(description)
-        assert "Must do this" in criteria
-        assert "Must do that" in criteria
-    
-    def test_extract_acceptance_criteria_not_found(self, ai_config):
-        """Test acceptance criteria extraction when not found."""
-        integration = ClaudeIntegration(ai_config)
-        
-        description = "Simple feature description without criteria."
-        
-        criteria = integration._extract_acceptance_criteria(description)
-        assert criteria == ""
-    
-    def test_parse_structured_response(self, ai_config):
-        """Test parsing of structured AI response."""
-        integration = ClaudeIntegration(ai_config)
-        
-        raw_response = """**IMPLEMENTATION SUMMARY:**
-Added dark mode toggle with localStorage persistence
-
-**FILES MODIFIED:**
-- src/components/ThemeToggle.tsx - create - New theme toggle component
-- src/hooks/useDarkMode.ts - create - Custom hook for theme management
-- src/App.tsx - modify - Added theme provider
-
-**COMMANDS TO RUN:**
-`npm install @types/react`
-`npm test`
-
-**NOTES:**
-Theme preference is stored in localStorage with fallback to system preference."""
-        
-        response = integration.parse_ai_response(raw_response)
-        
-        assert response.success is True
-        assert "dark mode toggle" in response.summary.lower()
-        assert len(response.file_changes) == 3
-        assert len(response.commands) == 2
-        
-        # Check file changes
-        file_paths = [fc.path for fc in response.file_changes]
-        assert "src/components/ThemeToggle.tsx" in file_paths
-        assert "src/hooks/useDarkMode.ts" in file_paths
-        assert "src/App.tsx" in file_paths
-        
-        # Check commands
-        commands = [cmd.command for cmd in response.commands]
-        assert "npm install @types/react" in commands
-        assert "npm test" in commands
-    
-    def test_parse_freeform_response(self, ai_config):
-        """Test parsing of freeform AI response."""
-        config = AIConfig(response_format="freeform")
-        integration = ClaudeIntegration(config)
-        
-        raw_response = """I'll implement the dark mode feature by creating ThemeToggle.tsx 
-and modifying App.tsx. You should run `npm install` after implementation."""
-        
-        response = integration.parse_ai_response(raw_response)
-        
-        assert response.success is True
-        assert "implement the dark mode feature" in response.summary
-        assert len(response.file_changes) >= 1
-        assert len(response.commands) >= 1
-    
-    def test_parse_malformed_response(self, ai_config):
-        """Test parsing of malformed AI response."""
-        integration = ClaudeIntegration(ai_config)
-        
-        raw_response = "Invalid response format without structure"
-        
-        response = integration.parse_ai_response(raw_response)
-        
-        # Should still return a response, even if parsing failed
-        assert response.raw_output == raw_response
-    
-    def test_parse_file_changes(self, ai_config):
-        """Test parsing file changes from text."""
-        integration = ClaudeIntegration(ai_config)
-        
-        files_text = """- src/component.tsx - create - New component
-- utils/helper.ts - modify - Added utility function
-- README.md - update - Updated documentation"""
-        
-        file_changes = integration._parse_file_changes(files_text)
-        
-        assert len(file_changes) == 3
-        assert file_changes[0].path == "src/component.tsx"
-        assert file_changes[0].action == "create"
-        assert file_changes[1].path == "utils/helper.ts"
-        assert file_changes[1].action == "modify"
-        assert file_changes[2].path == "README.md"
-        assert file_changes[2].action == "modify"  # update -> modify
-    
-    def test_parse_commands(self, ai_config):
-        """Test parsing commands from text."""
-        integration = ClaudeIntegration(ai_config)
-        
-        commands_text = """- `npm install` - Install dependencies
-- `npm test` - Run tests
-- `npm run build` - Build project"""
-        
-        commands = integration._parse_commands(commands_text)
-        
-        assert len(commands) == 3
-        assert commands[0].command == "npm install"
-        assert commands[0].description == "Install dependencies"
-        assert commands[1].command == "npm test"
-        assert commands[2].command == "npm run build"
-
-
-class TestAIIntegrationFunctions:
-    """Test AI integration module functions."""
-    
-    @patch('auto.integrations.ai.ClaudeIntegration')
-    def test_execute_ai_command(self, mock_integration_class, ai_config):
-        """Test execute_ai_command function."""
-        mock_integration = Mock()
-        mock_integration.validate_ai_prerequisites.return_value = None
-        mock_integration.execute_ai_command.return_value = "AI response"
-        mock_integration_class.return_value = mock_integration
-        
-        result = execute_ai_command("test prompt", "coder", ai_config)
-        
-        assert result == "AI response"
-        mock_integration.validate_ai_prerequisites.assert_called_once()
-        mock_integration.execute_ai_command.assert_called_once_with(
-            "test prompt", "coder", None, None
-        )
-    
-    @patch('auto.integrations.ai.ClaudeIntegration')
-    def test_format_implementation_prompt(self, mock_integration_class, ai_config, test_issue):
-        """Test format_implementation_prompt function."""
-        mock_integration = Mock()
-        mock_integration.format_implementation_prompt.return_value = "formatted prompt"
-        mock_integration_class.return_value = mock_integration
-        
-        result = format_implementation_prompt(test_issue, ai_config)
-        
-        assert result == "formatted prompt"
-        mock_integration.format_implementation_prompt.assert_called_once_with(
-            test_issue, None, None
-        )
-    
-    @patch('auto.integrations.ai.ClaudeIntegration')
-    def test_parse_ai_response(self, mock_integration_class, ai_config):
-        """Test parse_ai_response function."""
-        mock_integration = Mock()
-        mock_response = AIResponse(success=True, summary="test")
-        mock_integration.parse_ai_response.return_value = mock_response
-        mock_integration_class.return_value = mock_integration
-        
-        result = parse_ai_response("raw response", ai_config)
-        
-        assert result == mock_response
-        mock_integration.parse_ai_response.assert_called_once_with("raw response")
-    
-    @patch('auto.integrations.ai.ClaudeIntegration')
-    def test_validate_ai_prerequisites(self, mock_integration_class, ai_config):
-        """Test validate_ai_prerequisites function."""
-        mock_integration = Mock()
-        mock_integration.validate_ai_prerequisites.return_value = None
-        mock_integration_class.return_value = mock_integration
-        
-        validate_ai_prerequisites(ai_config)
-        
-        mock_integration.validate_ai_prerequisites.assert_called_once()
-
-
-class TestAIIntegrationEdgeCases:
-    """Test edge cases and error conditions."""
-    
-    def test_claude_integration_with_empty_agent(self):
-        """Test ClaudeIntegration with empty agent configuration."""
-        config = AIConfig(implementation_agent="")
-        integration = ClaudeIntegration(config)
-        
-        with pytest.raises(AIError):
-            integration.validate_ai_prerequisites()
-    
-    @patch('auto.integrations.ai.run_command')
-    def test_execute_ai_command_with_additional_args(self, mock_run_command, ai_config):
-        """Test AI command execution with additional arguments."""
-        mock_run_command.return_value = Mock(
-            returncode=0,
-            stdout="AI response",
-            stderr=""
-        )
-        
-        integration = ClaudeIntegration(ai_config)
-        integration.execute_ai_command(
-            "test prompt",
-            "coder",
-            additional_args=["--verbose", "--debug"]
-        )
-        
-        mock_run_command.assert_called_once_with(
-            ["claude", "--agent", "coder", "--verbose", "--debug", "test prompt"],
-            capture_output=True,
-            timeout=60,
-            cwd=None,
-            input=None
-        )
-    
-    def test_format_prompt_with_missing_variables(self, ai_config, test_issue):
-        """Test prompt formatting with missing variables."""
-        integration = ClaudeIntegration(ai_config)
-        
-        # Use custom prompt with non-existent variable
-        custom_prompt = "Issue {issue_id} by {nonexistent_variable}"
-        
-        # Should not raise, but log warning
-        prompt = integration.format_implementation_prompt(
-            test_issue,
-            custom_prompt=custom_prompt
-        )
-        
-        assert "#123" in prompt
-        # The nonexistent variable should remain unreplaced
-        assert "{nonexistent_variable}" in prompt
-    
-    def test_parse_response_with_exception(self, ai_config):
-        """Test AI response parsing when exception occurs."""
-        integration = ClaudeIntegration(ai_config)
-        
-        # Mock to raise exception during parsing
-        with patch.object(integration, '_parse_structured_response', side_effect=Exception("Parse error")):
-            response = integration.parse_ai_response("test response")
+    @pytest.mark.anyio
+    async def test_execute_implementation_success(self, claude_integration, sample_issue):
+        """Test successful AI implementation execution."""
+        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
+             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute, \
+             patch.object(claude_integration, '_parse_ai_response') as mock_parse:
             
-            assert response.success is False
-            assert "Failed to parse AI response" in response.error_message
-            assert response.raw_output == "test response"
+            # Mock command result
+            mock_execute.return_value = AICommandResult(
+                success=True,
+                output="Implementation complete",
+                error="",
+                exit_code=0,
+                duration=10.0
+            )
+            
+            # Mock parsed response
+            mock_response = AIResponse(
+                success=True,
+                response_type="implementation",
+                content="Implementation complete",
+                file_changes=[{"action": "created", "path": "src/DarkMode.tsx"}],
+                commands=["npm test"],
+                metadata={}
+            )
+            mock_parse.return_value = mock_response
+            
+            result = await claude_integration.execute_implementation(
+                sample_issue, 
+                "/tmp/worktree"
+            )
+            
+            assert result == mock_response
+            mock_execute.assert_called_once()
+            mock_parse.assert_called_once_with("Implementation complete", "implementation")
+
+    @pytest.mark.anyio
+    async def test_execute_implementation_with_custom_prompt(self, claude_integration, sample_issue):
+        """Test AI implementation with custom prompt."""
+        custom_prompt = "Focus on performance and testing"
+        
+        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
+             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute, \
+             patch.object(claude_integration, '_parse_ai_response') as mock_parse, \
+             patch.object(claude_integration, '_format_implementation_prompt') as mock_format:
+            
+            mock_format.return_value = f"Issue #{sample_issue.id}: {sample_issue.title}\n\n{sample_issue.description}\n\n{custom_prompt}"
+            mock_execute.return_value = AICommandResult(
+                success=True, output="Custom implementation", error="", exit_code=0, duration=5.0
+            )
+            mock_parse.return_value = AIResponse(
+                success=True, response_type="implementation", content="Custom implementation",
+                file_changes=[], commands=[], metadata={}
+            )
+            
+            await claude_integration.execute_implementation(
+                sample_issue, "/tmp/worktree", custom_prompt
+            )
+            
+            mock_format.assert_called_once_with(sample_issue, "/tmp/worktree", custom_prompt)
+
+    @pytest.mark.anyio
+    async def test_execute_implementation_failure(self, claude_integration, sample_issue):
+        """Test AI implementation failure handling."""
+        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
+             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute:
+            
+            mock_execute.return_value = AICommandResult(
+                success=False,
+                output="",
+                error="Command failed",
+                exit_code=1,
+                duration=2.0
+            )
+            
+            with pytest.raises(AIIntegrationError) as excinfo:
+                await claude_integration.execute_implementation(sample_issue, "/tmp/worktree")
+            
+            assert "AI implementation failed" in str(excinfo.value)
+            assert excinfo.value.exit_code == 1
+
+    @pytest.mark.anyio
+    async def test_execute_ai_command_success(self, claude_integration):
+        """Test successful AI command execution."""
+        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+            # Mock subprocess
+            mock_process = AsyncMock()
+            mock_process.returncode = 0
+            mock_process.communicate.return_value = (b"Success output", b"")
+            mock_create_proc.return_value = mock_process
+            
+            result = await claude_integration._execute_ai_command(
+                "Test prompt",
+                "coder",
+                "/tmp/workdir"
+            )
+            
+            assert result.success is True
+            assert result.output == "Success output"
+            assert result.error == ""
+            assert result.exit_code == 0
+            assert result.duration > 0
+
+    @pytest.mark.anyio
+    async def test_execute_ai_command_timeout(self, claude_integration):
+        """Test AI command timeout handling."""
+        with patch('asyncio.create_subprocess_exec') as mock_create_proc, \
+             patch('asyncio.wait_for', side_effect=asyncio.TimeoutError):
+            
+            mock_process = AsyncMock()
+            mock_create_proc.return_value = mock_process
+            
+            result = await claude_integration._execute_ai_command(
+                "Test prompt",
+                "coder"
+            )
+            
+            assert result.success is False
+            assert "timed out" in result.error
+            assert result.exit_code == -1
+            mock_process.kill.assert_called_once()
+
+    @pytest.mark.anyio
+    async def test_execute_ai_command_exception(self, claude_integration):
+        """Test AI command exception handling."""
+        with patch('asyncio.create_subprocess_exec', side_effect=Exception("Process error")):
+            
+            result = await claude_integration._execute_ai_command(
+                "Test prompt",
+                "coder"
+            )
+            
+            assert result.success is False
+            assert "Process error" in result.error
+            assert result.exit_code == -1
+
+    def test_format_implementation_prompt_default(self, claude_integration, sample_issue):
+        """Test default implementation prompt formatting."""
+        with patch.object(claude_integration, '_get_repository_context', return_value="repo context"):
+            
+            prompt = claude_integration._format_implementation_prompt(
+                sample_issue, 
+                "/tmp/worktree"
+            )
+            
+            # The prompt includes issue context in the formatted result
+            assert sample_issue.id in prompt
+            assert sample_issue.title in prompt
+            assert sample_issue.description in prompt
+            assert "feature" in prompt and "ui" in prompt  # labels
+            assert "developer" in prompt   # assignee
+            assert "repo context" in prompt
+
+    def test_format_implementation_prompt_custom(self, claude_integration, sample_issue):
+        """Test custom implementation prompt formatting."""
+        custom_prompt = "Focus on performance"
+        
+        prompt = claude_integration._format_implementation_prompt(
+            sample_issue,
+            "/tmp/worktree", 
+            custom_prompt
+        )
+        
+        assert sample_issue.id in prompt
+        assert sample_issue.title in prompt
+        assert custom_prompt in prompt
+
+    def test_parse_ai_response_json(self, claude_integration):
+        """Test parsing structured JSON AI response."""
+        json_output = json.dumps({
+            "content": "Implementation complete",
+            "file_changes": [{"action": "created", "path": "src/test.py"}],
+            "commands": ["pytest"],
+            "metadata": {"duration": "5min"}
+        })
+        
+        response = claude_integration._parse_ai_response(json_output, "implementation")
+        
+        assert response.success is True
+        assert response.response_type == "implementation"
+        assert response.content == "Implementation complete"
+        assert len(response.file_changes) == 1
+        assert response.file_changes[0]["action"] == "created"
+        assert response.commands == ["pytest"]
+        assert response.metadata["duration"] == "5min"
+
+    def test_parse_ai_response_freeform(self, claude_integration):
+        """Test parsing freeform AI response."""
+        freeform_output = """
+        Implementation complete.
+        
+        Modified: src/components/Button.tsx
+        Created: src/hooks/useDarkMode.ts
+        
+        Run: npm test
+        Execute: npm run build
+        """
+        
+        response = claude_integration._parse_ai_response(freeform_output, "implementation")
+        
+        assert response.success is True
+        assert response.response_type == "implementation"
+        assert "Implementation complete" in response.content
+        assert len(response.file_changes) == 2
+        assert any(change["action"] == "modified" for change in response.file_changes)
+        assert any(change["action"] == "created" for change in response.file_changes)
+        assert "npm test" in response.commands
+        assert "npm run build" in response.commands
+
+    def test_parse_ai_response_malformed(self, claude_integration):
+        """Test parsing malformed AI response."""
+        malformed_output = '{"invalid": json'
+        
+        response = claude_integration._parse_ai_response(malformed_output, "implementation")
+        
+        # The parsing should handle malformed JSON gracefully and still return structured response
+        assert response.response_type == "implementation"
+        assert response.content == malformed_output
+        # It should still parse freeform content, so check for parse_error OR success
+        assert "parse_error" in response.metadata or response.success
+
+    def test_extract_file_changes(self, claude_integration):
+        """Test file change extraction from text."""
+        text = """
+        Modified: src/app.py
+        Created: tests/test_new.py
+        - src/utils.py (modified)
+        - src/config.py (created)
+        """
+        
+        changes = claude_integration._extract_file_changes(text)
+        
+        assert len(changes) == 4
+        assert {"action": "modified", "path": "src/app.py"} in changes
+        assert {"action": "created", "path": "tests/test_new.py"} in changes
+        assert {"action": "modified", "path": "src/utils.py"} in changes
+        assert {"action": "created", "path": "src/config.py"} in changes
+
+    def test_extract_commands(self, claude_integration):
+        """Test command extraction from text."""
+        text = """
+        ```bash
+        npm install
+        npm test
+        # This is a comment
+        ```
+        
+        Run: pytest -v
+        Execute: black --check .
+        """
+        
+        commands = claude_integration._extract_commands(text)
+        
+        assert "npm install" in commands
+        assert "npm test" in commands
+        assert "pytest -v" in commands
+        assert "black --check ." in commands
+        assert "# This is a comment" not in commands
+
+    def test_get_repository_context(self, claude_integration, tmp_path):
+        """Test repository context gathering."""
+        # Create test files
+        (tmp_path / "package.json").write_text('{"name": "test"}')
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.py").write_text("# Python file")
+        
+        with patch('subprocess.run') as mock_run:
+            mock_run.return_value.returncode = 0
+            mock_run.return_value.stdout = "./src/app.py\n"
+            
+            context = claude_integration._get_repository_context(str(tmp_path))
+            
+            assert "package.json" in context
+            assert '"name": "test"' in context
+            assert "Key files:" in context
+
+    @pytest.mark.anyio
+    async def test_validate_prerequisites_success(self, claude_integration):
+        """Test successful prerequisites validation."""
+        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+            mock_process = AsyncMock()
+            mock_process.returncode = 0
+            mock_create_proc.return_value = mock_process
+            
+            # Should not raise
+            await claude_integration._validate_prerequisites()
+
+    @pytest.mark.anyio
+    async def test_validate_prerequisites_claude_not_found(self, claude_integration):
+        """Test prerequisites validation when Claude CLI not found."""
+        with patch('asyncio.create_subprocess_exec', side_effect=FileNotFoundError):
+            
+            with pytest.raises(AIIntegrationError) as excinfo:
+                await claude_integration._validate_prerequisites()
+            
+            assert "Claude CLI not found" in str(excinfo.value)
+
+    @pytest.mark.anyio
+    async def test_validate_prerequisites_claude_fails(self, claude_integration):
+        """Test prerequisites validation when Claude CLI fails."""
+        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+            mock_process = AsyncMock()
+            mock_process.returncode = 1
+            mock_create_proc.return_value = mock_process
+            
+            with pytest.raises(AIIntegrationError) as excinfo:
+                await claude_integration._validate_prerequisites()
+            
+            assert "not working properly" in str(excinfo.value)
+
+    def test_validate_prerequisites_no_agent(self):
+        """Test prerequisites validation when no agent configured."""
+        config_no_agent = AIConfig(
+            implementation_agent="",  # Empty agent
+            review_agent="reviewer",
+            update_agent="updater"
+        )
+        integration = ClaudeIntegration(config_no_agent)
+        
+        async def test():
+            with pytest.raises(AIIntegrationError) as excinfo:
+                await integration._validate_prerequisites()
+            assert "Implementation agent not configured" in str(excinfo.value)
+        
+        asyncio.run(test())
+
+
+class TestConvenienceFunctions:
+    """Test convenience functions."""
+
+    @pytest.mark.anyio
+    async def test_execute_ai_command(self, ai_config):
+        """Test execute_ai_command convenience function."""
+        with patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+            mock_integration = MagicMock()
+            mock_integration._execute_ai_command = AsyncMock(return_value=AICommandResult(
+                success=True, output="test", error="", exit_code=0, duration=1.0
+            ))
+            mock_integration_class.return_value = mock_integration
+            
+            result = await execute_ai_command(
+                ai_config, 
+                "test prompt", 
+                "coder"
+            )
+            
+            assert result.success is True
+            mock_integration._execute_ai_command.assert_called_once_with(
+                "test prompt", "coder", None
+            )
+
+    def test_format_implementation_prompt(self, sample_issue):
+        """Test format_implementation_prompt convenience function."""
+        with patch('auto.config.Config') as mock_config_class, \
+             patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+            
+            mock_config = MagicMock()
+            mock_config.ai = AIConfig()
+            mock_config_class.return_value = mock_config
+            
+            mock_integration = MagicMock()
+            mock_integration._format_implementation_prompt.return_value = "formatted prompt"
+            mock_integration_class.return_value = mock_integration
+            
+            result = format_implementation_prompt(
+                sample_issue,
+                "/tmp/worktree"
+            )
+            
+            assert result == "formatted prompt"
+            mock_integration._format_implementation_prompt.assert_called_once_with(
+                sample_issue, "/tmp/worktree", None
+            )
+
+    def test_parse_ai_response(self):
+        """Test parse_ai_response convenience function."""
+        with patch('auto.config.Config') as mock_config_class, \
+             patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+            
+            mock_config = MagicMock()
+            mock_config.ai = AIConfig()
+            mock_config_class.return_value = mock_config
+            
+            mock_integration = MagicMock()
+            mock_response = AIResponse(
+                success=True, response_type="test", content="test",
+                file_changes=[], commands=[], metadata={}
+            )
+            mock_integration._parse_ai_response.return_value = mock_response
+            mock_integration_class.return_value = mock_integration
+            
+            result = parse_ai_response("test output")
+            
+            assert result == mock_response
+            mock_integration._parse_ai_response.assert_called_once_with(
+                "test output", "implementation"
+            )
+
+    @pytest.mark.anyio
+    async def test_validate_ai_prerequisites(self, ai_config):
+        """Test validate_ai_prerequisites convenience function."""
+        with patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+            mock_integration = MagicMock()
+            mock_integration._validate_prerequisites = AsyncMock()
+            mock_integration_class.return_value = mock_integration
+            
+            await validate_ai_prerequisites(ai_config)
+            
+            mock_integration._validate_prerequisites.assert_called_once()
+
+
+class TestAIIntegrationError:
+    """Test AIIntegrationError exception."""
+
+    def test_init_with_exit_code(self):
+        """Test AIIntegrationError with exit code."""
+        error = AIIntegrationError("Test error", exit_code=42)
+        assert str(error) == "Test error"
+        assert error.exit_code == 42
+
+    def test_init_without_exit_code(self):
+        """Test AIIntegrationError without exit code."""
+        error = AIIntegrationError("Test error")
+        assert str(error) == "Test error"
+        assert error.exit_code is None

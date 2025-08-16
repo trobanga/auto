@@ -16,6 +16,13 @@ from auto.workflows.process import (
     ProcessWorkflowError,
 )
 
+from auto.workflows.implement import (
+    implement_issue_workflow,
+    apply_ai_changes,
+    validate_implementation_prerequisites,
+    ImplementationError,
+)
+
 __all__ = [
     # Fetch workflow
     "fetch_issue_workflow",
@@ -30,4 +37,10 @@ __all__ = [
     "get_process_status",
     "validate_process_prerequisites",
     "ProcessWorkflowError",
+    
+    # Implementation workflow
+    "implement_issue_workflow",
+    "apply_ai_changes",
+    "validate_implementation_prerequisites",
+    "ImplementationError",
 ]

@@ -231,11 +231,11 @@ class AIResponse(BaseModel):
     """AI response model for structured parsing."""
     
     success: bool = Field(description="Whether AI implementation was successful")
-    summary: Optional[str] = Field(default=None, description="Implementation summary")
-    file_changes: List[AIFileChange] = Field(default_factory=list, description="Suggested file changes")
-    commands: List[AICommand] = Field(default_factory=list, description="Commands to run")
-    error_message: Optional[str] = Field(default=None, description="Error message if failed")
-    raw_output: Optional[str] = Field(default=None, description="Raw AI output")
+    response_type: str = Field(description="Type of response: implementation, review, update")
+    content: str = Field(description="Main response content")
+    file_changes: List[Dict[str, str]] = Field(default_factory=list, description="Suggested file changes")
+    commands: List[str] = Field(default_factory=list, description="Commands to run")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
 
 
 class PRMetadata(BaseModel):
