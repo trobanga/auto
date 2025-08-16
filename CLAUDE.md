@@ -1,4 +1,4 @@
-# Auto - Automatic User Task Orchestrator
+# auto - Automatic User Task Orchestrator
 
 ## Overview
 A Python-based CLI tool that automates the complete workflow from issue to merged PR, including iterative review cycles with both AI and human reviewers.
