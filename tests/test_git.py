@@ -20,9 +20,18 @@ from auto.utils.shell import ShellError, ShellResult
 def mock_config():
     """Create mock configuration."""
     config = Mock(spec=Config)
-    config.defaults.worktree_base = "../{project}-worktrees"
-    config.workflows.branch_naming = "auto/{issue_type}/{issue_id}"
-    config.workflows.worktree_conflict_resolution = "prompt"
+    
+    # Mock defaults
+    defaults = Mock()
+    defaults.worktree_base = "../{project}-worktrees"
+    config.defaults = defaults
+    
+    # Mock workflows
+    workflows = Mock()
+    workflows.branch_naming = "auto/{issue_type}/{issue_id}"
+    workflows.worktree_conflict_resolution = "prompt"
+    config.workflows = workflows
+    
     return config
 
 

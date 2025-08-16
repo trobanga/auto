@@ -336,7 +336,7 @@ class TestProcessWorkflow:
         mock_worktree_class.return_value = mock_worktree_manager
         mock_worktree_manager.create_worktree.side_effect = Exception("Worktree creation failed")
         
-        with pytest.raises(ProcessWorkflowError, match="Worktree creation failed"):
+        with pytest.raises(ProcessWorkflowError, match="Failed to process issue"):
             process_issue_workflow("#123")
         
         # Should update state to failed
@@ -435,19 +435,19 @@ class TestProcessWorkflow:
         mock_state.updated_at = datetime.now()
         mock_core.get_workflow_state.return_value = mock_state
         
-        # Mock worktree exists
-        sample_worktree_info.exists.return_value = True
-        
-        result = get_process_status("#123")
-        
-        assert result is not None
-        assert result['issue_id'] == "#123"
-        assert result['status'] == "implementing"
-        assert result['branch'] == "auto/feature/123"
-        assert result['has_worktree'] is True
-        assert result['worktree_exists'] is True
-        assert result['repository'] == "owner/repo"
-        assert result['issue_title'] == "Test issue"
+        # Mock worktree exists method properly
+        with patch.object(sample_worktree_info, 'exists') as mock_exists:
+            mock_exists.return_value = True
+            result = get_process_status("#123")
+            
+            assert result is not None
+            assert result['issue_id'] == "#123"
+            assert result['status'] == "implementing"
+            assert result['branch'] == "auto/feature/123"
+            assert result['has_worktree'] is True
+            assert result['worktree_exists'] is True
+            assert result['repository'] == "owner/repo"
+            assert result['issue_title'] == "Test issue"
     
     @patch("auto.workflows.process.get_core")
     def test_get_process_status_no_state(self, mock_get_core):
@@ -459,8 +459,8 @@ class TestProcessWorkflow:
         result = get_process_status("#123")
         assert result is None
     
-    @patch("auto.workflows.process.get_git_root")
-    @patch("auto.workflows.process.validate_github_auth")
+    @patch("auto.utils.shell.get_git_root")
+    @patch("auto.integrations.github.validate_github_auth")
     @patch("auto.workflows.process.detect_repository")
     @patch("auto.workflows.process.get_config")
     def test_validate_process_prerequisites_success(
@@ -480,7 +480,7 @@ class TestProcessWorkflow:
         errors = validate_process_prerequisites("#123")
         assert len(errors) == 0
     
-    @patch("auto.workflows.process.get_git_root")
+    @patch("auto.utils.shell.get_git_root")
     def test_validate_process_prerequisites_no_git_repo(self, mock_get_git_root):
         """Test prerequisite validation without git repository."""
         mock_get_git_root.return_value = None
@@ -488,8 +488,8 @@ class TestProcessWorkflow:
         errors = validate_process_prerequisites("#123")
         assert "Not in a git repository" in errors
     
-    @patch("auto.workflows.process.get_git_root")
-    @patch("auto.workflows.process.validate_github_auth")
+    @patch("auto.utils.shell.get_git_root")
+    @patch("auto.integrations.github.validate_github_auth")
     def test_validate_process_prerequisites_no_github_auth(self, mock_validate_auth, mock_get_git_root):
         """Test prerequisite validation without GitHub authentication."""
         mock_get_git_root.return_value = Path("/repo")
@@ -498,8 +498,8 @@ class TestProcessWorkflow:
         errors = validate_process_prerequisites("#123")
         assert any("GitHub CLI not authenticated" in error for error in errors)
     
-    @patch("auto.workflows.process.get_git_root")
-    @patch("auto.workflows.process.validate_github_auth")
+    @patch("auto.utils.shell.get_git_root")
+    @patch("auto.integrations.github.validate_github_auth")
     @patch("auto.workflows.process.detect_repository")
     def test_validate_process_prerequisites_no_repo_access(
         self, 

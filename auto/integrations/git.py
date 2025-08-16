@@ -401,16 +401,19 @@ class GitWorktreeManager:
             # Ensure parent directory exists
             worktree_path.parent.mkdir(parents=True, exist_ok=True)
             
-            # Create worktree with new branch
+            # Create worktree with new branch with timeout
             result = run_command(
                 f"git worktree add -b {branch_name} {worktree_path} {base_branch}",
-                check=True
+                check=True,
+                timeout=60  # 60 second timeout for worktree operations
             )
             
             logger.debug(f"Git worktree created: {result.stdout}")
             
         except ShellError as e:
             raise GitWorktreeError(f"Failed to create git worktree: {e}")
+        except OSError as e:
+            raise GitWorktreeError(f"Filesystem error creating worktree: {e}")
     
     def _cleanup_failed_worktree(self, worktree_path: Path, branch_name: str) -> None:
         """Clean up after failed worktree creation.

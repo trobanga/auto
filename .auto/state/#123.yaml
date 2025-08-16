@@ -1,0 +1,14 @@
+branch: null
+created_at: '2025-08-16T06:46:28.309593'
+issue: null
+issue_id: '#123'
+metadata:
+  error: 'Unexpected error fetching GitHub issue: GitHub error'
+pr_number: null
+repository: null
+review_iteration: 0
+reviews: []
+status: failed
+updated_at: '2025-08-16T06:46:28.311087'
+worktree: null
+worktree_info: null

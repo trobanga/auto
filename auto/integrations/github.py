@@ -87,10 +87,11 @@ class GitHubIntegration:
         clean_issue_id = issue_id.lstrip("#")
         
         try:
-            # Use gh CLI to fetch issue details
+            # Use gh CLI to fetch issue details with timeout
             result = run_command(
                 f"gh issue view {clean_issue_id} --repo {repository.full_name} --json number,title,body,state,labels,assignees,createdAt,updatedAt,url",
-                check=True
+                check=True,
+                timeout=30  # 30 second timeout for network operations
             )
             
             issue_data = json.loads(result.stdout)

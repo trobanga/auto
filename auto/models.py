@@ -152,6 +152,44 @@ class PullRequest(BaseModel):
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
 
 
+class GitHubRepository(BaseModel):
+    """GitHub repository context model."""
+    
+    owner: str = Field(description="Repository owner")
+    name: str = Field(description="Repository name")
+    default_branch: str = Field(default="main", description="Default branch")
+    remote_url: Optional[str] = Field(default=None, description="Remote URL")
+    
+    @property
+    def full_name(self) -> str:
+        """Get full repository name (owner/name)."""
+        return f"{self.owner}/{self.name}"
+    
+    @property
+    def github_url(self) -> str:
+        """Get GitHub URL for the repository."""
+        return f"https://github.com/{self.owner}/{self.name}"
+
+
+class WorktreeInfo(BaseModel):
+    """Worktree information model."""
+    
+    path: str = Field(description="Worktree path")
+    branch: str = Field(description="Branch name")
+    issue_id: str = Field(description="Associated issue ID")
+    created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    
+    @property
+    def path_obj(self) -> Path:
+        """Get Path object for worktree path."""
+        return Path(self.path)
+    
+    def exists(self) -> bool:
+        """Check if worktree path exists."""
+        return self.path_obj.exists()
+
+
 class Review(BaseModel):
     """Review model for tracking review cycles."""
     
@@ -206,7 +244,9 @@ class GitHubConfig(BaseModel):
     default_org: Optional[str] = Field(default=None, description="Default GitHub organization")
     default_reviewer: Optional[str] = Field(default=None, description="Default reviewer")
     pr_template: str = Field(default=".github/pull_request_template.md", description="PR template path")
-    token: Optional[str] = Field(default=None, description="GitHub token")
+    token: Optional[str] = Field(default=None, description="GitHub token (optional with gh CLI)")
+    base_branch_detection: bool = Field(default=True, description="Auto-detect main/master branch")
+    issue_fetch_timeout: int = Field(default=30, description="Timeout for issue fetching (seconds)")
 
 
 class LinearConfig(BaseModel):
@@ -247,6 +287,8 @@ class WorkflowsConfig(BaseModel):
     require_human_approval: bool = Field(default=True, description="Require human approval")
     test_command: Optional[str] = Field(default=None, description="Test command")
     review_check_interval: int = Field(default=60, description="Review check interval (seconds)")
+    worktree_cleanup_on_merge: bool = Field(default=True, description="Auto-cleanup merged worktrees")
+    worktree_conflict_resolution: str = Field(default="prompt", description="prompt|force|skip")
 
 
 class Config(BaseModel):
@@ -260,44 +302,6 @@ class Config(BaseModel):
     workflows: WorkflowsConfig = Field(default_factory=WorkflowsConfig, description="Workflow settings")
     
     model_config = {"extra": "allow"}  # Allow additional fields for extensibility
-
-
-class GitHubRepository(BaseModel):
-    """GitHub repository context model."""
-    
-    owner: str = Field(description="Repository owner")
-    name: str = Field(description="Repository name")
-    default_branch: str = Field(default="main", description="Default branch")
-    remote_url: Optional[str] = Field(default=None, description="Remote URL")
-    
-    @property
-    def full_name(self) -> str:
-        """Get full repository name (owner/name)."""
-        return f"{self.owner}/{self.name}"
-    
-    @property
-    def github_url(self) -> str:
-        """Get GitHub URL for the repository."""
-        return f"https://github.com/{self.owner}/{self.name}"
-
-
-class WorktreeInfo(BaseModel):
-    """Worktree information model."""
-    
-    path: str = Field(description="Worktree path")
-    branch: str = Field(description="Branch name")
-    issue_id: str = Field(description="Associated issue ID")
-    created_at: datetime = Field(default_factory=datetime.now, description="Creation timestamp")
-    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
-    
-    @property
-    def path_obj(self) -> Path:
-        """Get Path object for worktree path."""
-        return Path(self.path)
-    
-    def exists(self) -> bool:
-        """Check if worktree path exists."""
-        return self.path_obj.exists()
 
 
 class IssueIdentifier(BaseModel):
