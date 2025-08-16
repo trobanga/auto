@@ -23,6 +23,13 @@ from auto.workflows.implement import (
     ImplementationError,
 )
 
+from auto.workflows.pr_create import (
+    create_pull_request_workflow,
+    generate_pr_metadata,
+    generate_pr_description,
+    PRCreationError,
+)
+
 __all__ = [
     # Fetch workflow
     "fetch_issue_workflow",
@@ -43,4 +50,10 @@ __all__ = [
     "apply_ai_changes",
     "validate_implementation_prerequisites",
     "ImplementationError",
+    
+    # PR creation workflow
+    "create_pull_request_workflow",
+    "generate_pr_metadata",
+    "generate_pr_description",
+    "PRCreationError",
 ]

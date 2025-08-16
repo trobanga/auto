@@ -9,7 +9,7 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from ..integrations.github import GitHubIntegration, GitHubError
+from ..integrations.github import GitHubIntegration, GitHubIntegrationError
 from ..models import Issue, WorkflowState, WorkflowStatus, PRMetadata, PullRequest, PRStatus
 from ..utils.logger import get_logger
 from ..config import Config
@@ -94,7 +94,7 @@ async def create_pull_request_workflow(
         
         return workflow_state
         
-    except GitHubError as e:
+    except GitHubIntegrationError as e:
         logger.error(f"GitHub error during PR creation: {e}")
         workflow_state.update_status(WorkflowStatus.FAILED)
         raise PRCreationError(f"GitHub PR creation failed: {e}")

@@ -9,7 +9,7 @@ from rich.console import Console
 from rich.table import Table
 
 from auto import __version__
-from auto.config import ConfigError, config_manager
+from auto.config import ConfigError, config_manager, get_config
 from auto.core import get_core
 from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
@@ -250,6 +250,7 @@ def status(verbose: bool) -> None:
         table = Table(title="Active Workflows")
         table.add_column("Issue ID", style="cyan")
         table.add_column("Status", style="white")
+        table.add_column("AI Status", style="yellow")
         table.add_column("PR", style="green")
         table.add_column("Branch", style="blue")
         if verbose:
@@ -270,13 +271,26 @@ def status(verbose: bool) -> None:
                 "ready_to_merge": "[blue]",
                 "implementing": "[cyan]",
                 "fetching": "[blue]",
+                "creating_pr": "[magenta]",
             }.get(state.status.value if hasattr(state.status, 'value') else str(state.status), "")
             
             status_display = f"{status_style}{state.status}[/]" if status_style else str(state.status)
             
+            # Add AI status styling
+            ai_status_value = state.ai_status.value if hasattr(state.ai_status, 'value') else str(state.ai_status)
+            ai_status_style = {
+                "not_started": "[dim]",
+                "in_progress": "[yellow]",
+                "implemented": "[green]",
+                "failed": "[red]",
+            }.get(ai_status_value, "")
+            
+            ai_status_display = f"{ai_status_style}{ai_status_value}[/]" if ai_status_style else ai_status_value
+            
             row_data = [
                 state.issue_id,
                 status_display,
+                ai_status_display,
                 pr_info,
                 branch_info,
             ]
@@ -306,19 +320,38 @@ def status(verbose: bool) -> None:
         
         # Show summary
         status_counts = {}
+        ai_status_counts = {}
         worktree_count = 0
+        pr_count = 0
+        
         for state in workflow_states:
             status_key = state.status.value if hasattr(state.status, 'value') else str(state.status)
             status_counts[status_key] = status_counts.get(status_key, 0) + 1
+            
+            ai_status_key = state.ai_status.value if hasattr(state.ai_status, 'value') else str(state.ai_status)
+            ai_status_counts[ai_status_key] = ai_status_counts.get(ai_status_key, 0) + 1
+            
             if state.worktree_info:
                 worktree_count += 1
+            if state.pr_number:
+                pr_count += 1
         
         console.print(f"\n[bold]Summary:[/bold] {len(workflow_states)} active workflows")
-        for status, count in status_counts.items():
-            console.print(f"  {status}: {count}")
         
-        if verbose and worktree_count > 0:
-            console.print(f"  Active worktrees: {worktree_count}")
+        # Show workflow status breakdown
+        console.print("  [bold]Workflow Status:[/bold]")
+        for status, count in status_counts.items():
+            console.print(f"    {status}: {count}")
+        
+        # Show AI status breakdown
+        console.print("  [bold]AI Implementation:[/bold]")
+        for ai_status, count in ai_status_counts.items():
+            console.print(f"    {ai_status}: {count}")
+        
+        if verbose:
+            console.print(f"  [bold]Resources:[/bold]")
+            console.print(f"    Active worktrees: {worktree_count}")
+            console.print(f"    Pull requests: {pr_count}")
         
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
@@ -477,10 +510,210 @@ def fetch(issue_id: str, verbose: bool) -> None:
 
 @cli.command()
 @click.argument("issue_id")
-@click.option("--base-branch", "-b", help="Base branch for worktree (auto-detected if not specified)")
+@click.option("--prompt", help="Custom prompt text for AI implementation")
+@click.option("--prompt-file", help="Path to file containing custom prompt")
+@click.option("--prompt-template", help="Named prompt template to use")
+@click.option("--prompt-append", help="Text to append to default prompt")
+@click.option("--show-prompt", is_flag=True, help="Show resolved prompt without execution")
+@click.option("--agent", help="Custom AI agent to use for implementation")
+@click.option("--no-pr", is_flag=True, help="Skip PR creation after implementation")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
-def process(issue_id: str, base_branch: str, verbose: bool) -> None:
-    """Process issue by fetching details and creating worktree for development."""
+def implement(
+    issue_id: str, 
+    prompt: str, 
+    prompt_file: str, 
+    prompt_template: str, 
+    prompt_append: str, 
+    show_prompt: bool, 
+    agent: str, 
+    no_pr: bool, 
+    verbose: bool
+) -> None:
+    """Run AI implementation for existing issue with custom prompt options."""
+    try:
+        from auto.workflows import (
+            implement_issue_workflow, 
+            create_pull_request_workflow,
+            get_issue_from_state,
+            validate_implementation_prerequisites,
+            ImplementationError
+        )
+        from auto.workflows.pr_create import PRCreationError
+        import asyncio
+        
+        # Parse issue identifier
+        identifier = IssueIdentifier.parse(issue_id)
+        
+        if verbose:
+            console.print(f"[blue]Info:[/blue] Implementing {identifier.provider.value} issue: {identifier.issue_id}")
+        
+        # Get core and existing state
+        core = get_core()
+        state = core.get_workflow_state(identifier.issue_id)
+        
+        if state is None:
+            console.print(f"[red]Error:[/red] No workflow state found for {identifier.issue_id}")
+            console.print("[yellow]Hint:[/yellow] Run 'auto fetch' or 'auto process' first to create the workflow")
+            sys.exit(1)
+        
+        # Get issue from state
+        issue = get_issue_from_state(identifier.issue_id)
+        if issue is None:
+            console.print(f"[red]Error:[/red] Issue details not found for {identifier.issue_id}")
+            console.print("[yellow]Hint:[/yellow] Run 'auto fetch' first to load issue details")
+            sys.exit(1)
+        
+        # Validate prerequisites
+        try:
+            validate_implementation_prerequisites(state)
+        except ImplementationError as e:
+            console.print(f"[red]Error:[/red] Prerequisites not met: {e}")
+            console.print("[yellow]Hint:[/yellow] Ensure worktree exists and is properly configured")
+            sys.exit(1)
+        
+        if verbose:
+            console.print(f"[green]✓[/green] Found issue in worktree: {state.worktree}")
+            if prompt_template:
+                console.print(f"[blue]Info:[/blue] Using prompt template: {prompt_template}")
+            if agent:
+                console.print(f"[blue]Info:[/blue] Using custom agent: {agent}")
+        
+        # Override agent if specified
+        if agent:
+            config = get_config()
+            original_agent = config.ai.implementation_agent
+            config.ai.implementation_agent = agent
+            if verbose:
+                console.print(f"[blue]Info:[/blue] Agent override: {original_agent} → {agent}")
+        
+        # Run AI implementation
+        console.print(f"[blue]Info:[/blue] Running AI implementation...")
+        
+        try:
+            state = asyncio.run(implement_issue_workflow(
+                issue=issue,
+                workflow_state=state,
+                prompt_override=prompt,
+                prompt_file=prompt_file,
+                prompt_template=prompt_template,
+                prompt_append=prompt_append,
+                show_prompt=show_prompt
+            ))
+            
+            # Save state after implementation
+            core.save_workflow_state(state)
+            
+            if show_prompt:
+                console.print("[green]✓[/green] Prompt displayed")
+                return
+            
+            # Show implementation results
+            if state.ai_response and state.ai_response.success:
+                console.print(f"[green]✓[/green] AI implementation completed")
+                
+                if verbose and state.ai_response:
+                    file_count = len(state.ai_response.file_changes)
+                    cmd_count = len(state.ai_response.commands)
+                    console.print(f"  Files modified: {file_count}")
+                    console.print(f"  Commands executed: {cmd_count}")
+                    
+                    if state.ai_response.file_changes:
+                        console.print("  Changed files:")
+                        for change in state.ai_response.file_changes[:5]:  # Show first 5
+                            action = change.get('action', 'modified')
+                            path = change.get('path', 'unknown')
+                            console.print(f"    - {action.title()}: {path}")
+                        if len(state.ai_response.file_changes) > 5:
+                            console.print(f"    ... and {len(state.ai_response.file_changes) - 5} more")
+                
+                console.print(f"[green]✓[/green] Changes applied successfully")
+                console.print(f"[green]✓[/green] Workflow state updated")
+                
+                # Create PR if not disabled
+                if not no_pr:
+                    console.print(f"[blue]Info:[/blue] Creating pull request...")
+                    try:
+                        state = asyncio.run(create_pull_request_workflow(
+                            issue=issue,
+                            workflow_state=state
+                        ))
+                        
+                        core.save_workflow_state(state)
+                        
+                        if state.pr_number:
+                            console.print(f"[green]✓[/green] Pull request created: #{state.pr_number}")
+                            if verbose and state.repository:
+                                pr_url = f"https://github.com/{state.repository.full_name}/pull/{state.pr_number}"
+                                console.print(f"  URL: {pr_url}")
+                        else:
+                            console.print(f"[yellow]Warning:[/yellow] PR creation completed but no PR number available")
+                        
+                    except PRCreationError as e:
+                        console.print(f"[red]Error:[/red] Failed to create PR: {e}")
+                        console.print("[yellow]Note:[/yellow] Implementation completed successfully")
+                        sys.exit(1)
+                else:
+                    console.print("[blue]Info:[/blue] PR creation skipped (--no-pr)")
+                
+            else:
+                console.print(f"[red]Error:[/red] AI implementation failed")
+                if state.ai_response and state.ai_response.content:
+                    console.print(f"  Reason: {state.ai_response.content}")
+                sys.exit(1)
+            
+        except ImplementationError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        
+        # Show next steps
+        if not no_pr and state.pr_number:
+            console.print("\n[bold]Next steps:[/bold]")
+            console.print("1. Review the created pull request")
+            console.print("2. Address any review comments")
+            console.print("3. Merge when approved")
+        elif no_pr:
+            console.print("\n[bold]Next steps:[/bold]")
+            console.print("1. Review the implementation in the worktree")
+            console.print("2. Run [cyan]auto status[/cyan] to check progress")
+            console.print("3. Create PR manually when ready")
+            
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Unexpected error: {e}")
+        if verbose:
+            import traceback
+            console.print("[dim]" + traceback.format_exc() + "[/dim]")
+        sys.exit(1)
+
+
+@cli.command()
+@click.argument("issue_id")
+@click.option("--base-branch", "-b", help="Base branch for worktree (auto-detected if not specified)")
+@click.option("--prompt", help="Custom prompt text for AI implementation")
+@click.option("--prompt-file", help="Path to file containing custom prompt")
+@click.option("--prompt-template", help="Named prompt template to use")
+@click.option("--prompt-append", help="Text to append to default prompt")
+@click.option("--show-prompt", is_flag=True, help="Show resolved prompt without execution")
+@click.option("--agent", help="Custom AI agent to use for implementation")
+@click.option("--no-ai", is_flag=True, help="Skip AI implementation step")
+@click.option("--no-pr", is_flag=True, help="Skip PR creation step")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
+def process(
+    issue_id: str, 
+    base_branch: str, 
+    prompt: str, 
+    prompt_file: str, 
+    prompt_template: str, 
+    prompt_append: str, 
+    show_prompt: bool, 
+    agent: str, 
+    no_ai: bool, 
+    no_pr: bool, 
+    verbose: bool
+) -> None:
+    """Process issue: fetch details, create worktree, run AI implementation, and create PR."""
     try:
         from auto.workflows import (
             process_issue_workflow, 
@@ -493,6 +726,14 @@ def process(issue_id: str, base_branch: str, verbose: bool) -> None:
         
         if verbose:
             console.print(f"[blue]Info:[/blue] Processing {identifier.provider.value} issue: {identifier.issue_id}")
+            if no_ai:
+                console.print("[blue]Info:[/blue] AI implementation step will be skipped")
+            if no_pr:
+                console.print("[blue]Info:[/blue] PR creation step will be skipped")
+            if prompt_template:
+                console.print(f"[blue]Info:[/blue] Using prompt template: {prompt_template}")
+            if agent:
+                console.print(f"[blue]Info:[/blue] Using custom agent: {agent}")
         
         # Validate prerequisites
         console.print("[blue]Info:[/blue] Validating prerequisites...")
@@ -507,10 +748,33 @@ def process(issue_id: str, base_branch: str, verbose: bool) -> None:
         if verbose:
             console.print("[green]✓[/green] Prerequisites validated")
         
-        # Run process workflow
+        # Override agent if specified
+        if agent:
+            config = get_config()
+            original_agent = config.ai.implementation_agent
+            config.ai.implementation_agent = agent
+            if verbose:
+                console.print(f"[blue]Info:[/blue] Agent override: {original_agent} → {agent}")
+        
+        # Run enhanced process workflow
         console.print(f"[blue]Info:[/blue] Processing issue {identifier.issue_id}...")
         
-        state = process_issue_workflow(identifier.issue_id, base_branch)
+        state = process_issue_workflow(
+            issue_id=identifier.issue_id, 
+            base_branch=base_branch,
+            enable_ai=not no_ai,
+            enable_pr=not no_pr,
+            prompt_override=prompt,
+            prompt_file=prompt_file,
+            prompt_template=prompt_template,
+            prompt_append=prompt_append,
+            show_prompt=show_prompt
+        )
+        
+        # Handle show prompt early exit
+        if show_prompt:
+            console.print("[green]✓[/green] Prompt displayed")
+            return
         
         # Success - show results
         if state.issue:
@@ -529,18 +793,50 @@ def process(issue_id: str, base_branch: str, verbose: bool) -> None:
                 if state.repository:
                     console.print(f"  Repository: {state.repository.full_name}")
         
-        console.print(f"[green]✓[/green] Ready for development")
+        # Show AI implementation results
+        if not no_ai and state.ai_response:
+            if state.ai_response.success:
+                console.print(f"[green]✓[/green] AI implementation completed")
+                if verbose:
+                    file_count = len(state.ai_response.file_changes)
+                    cmd_count = len(state.ai_response.commands)
+                    console.print(f"  Files modified: {file_count}")
+                    console.print(f"  Commands executed: {cmd_count}")
+            else:
+                console.print(f"[yellow]Warning:[/yellow] AI implementation failed")
+        elif no_ai:
+            console.print(f"[blue]Info:[/blue] AI implementation skipped")
+        
+        # Show PR creation results
+        if not no_pr and state.pr_number:
+            console.print(f"[green]✓[/green] Pull request created: #{state.pr_number}")
+            if verbose and state.repository:
+                pr_url = f"https://github.com/{state.repository.full_name}/pull/{state.pr_number}"
+                console.print(f"  URL: {pr_url}")
+        elif no_pr:
+            console.print(f"[blue]Info:[/blue] PR creation skipped")
+        
+        console.print(f"[green]✓[/green] Process workflow completed")
         
         if verbose:
             console.print(f"  State file: .auto/state/{identifier.issue_id}.yaml")
             console.print(f"  Status: {state.status.value}")
         
-        # Show next steps
+        # Show next steps based on what was completed
         console.print("\n[bold]Next steps:[/bold]")
-        if state.worktree_info:
+        if state.pr_number:
+            console.print("1. Review the created pull request")
+            console.print("2. Address any review comments")  
+            console.print("3. Merge when approved")
+        elif not no_ai and not no_pr:
+            console.print("1. Review the implementation in the worktree")
+            console.print("2. Create PR manually when ready")
+            console.print("3. Run [cyan]auto status[/cyan] to check progress")
+        elif state.worktree_info:
             console.print(f"1. Change to worktree directory: [cyan]cd {state.worktree_info.path}[/cyan]")
-        console.print("2. Start implementing the issue")
-        console.print("3. Run [cyan]auto status[/cyan] to check progress")
+            if no_ai:
+                console.print("2. Start implementing the issue")
+            console.print("3. Run [cyan]auto status[/cyan] to check progress")
         
     except ProcessWorkflowError as e:
         console.print(f"[red]Error:[/red] {e}")
