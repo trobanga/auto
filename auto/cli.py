@@ -134,7 +134,7 @@ def config_list() -> None:
         
         table = Table(title="Configuration Files")
         table.add_column("Type", style="cyan")
-        table.add_column("Path", style="white")
+        table.add_column("Path")
         table.add_column("Status", style="green")
         
         for config_type, path in config_files.items():
@@ -151,6 +151,87 @@ def config_list() -> None:
         
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+
+
+@config.command("show")
+@click.option("--format", "-f", type=click.Choice(["table", "yaml", "json"]), default="table", help="Output format (default: table)")
+@click.option("--section", "-s", help="Show only specific section (e.g., 'github', 'ai', 'workflows')")
+def config_show(format: str, section: str) -> None:
+    """Show current configuration values."""
+    try:
+        current_config = config_manager.get_config()
+        config_dict = current_config.model_dump()
+        
+        # Filter by section if specified
+        if section:
+            if section not in config_dict:
+                console.print(f"[red]Error:[/red] Section '{section}' not found in configuration")
+                console.print(f"[dim]Available sections: {', '.join(config_dict.keys())}[/dim]")
+                sys.exit(1)
+            config_dict = {section: config_dict[section]}
+        
+        if format == "yaml":
+            import yaml
+            console.print(yaml.dump(config_dict, default_flow_style=False, sort_keys=True))
+        elif format == "json":
+            import json
+            console.print(json.dumps(config_dict, indent=2, sort_keys=True, default=str))
+        else:  # table format
+            def add_config_rows(table: Table, data: dict, prefix: str = "") -> None:
+                """Recursively add configuration rows to table."""
+                for key, value in data.items():
+                    full_key = f"{prefix}.{key}" if prefix else key
+                    
+                    if isinstance(value, dict):
+                        # Add section header
+                        table.add_row(f"[bold cyan]{full_key}[/bold cyan]", "", "")
+                        add_config_rows(table, value, full_key)
+                    elif isinstance(value, list):
+                        # Handle lists
+                        if value:
+                            table.add_row(full_key, f"[{len(value)} items]", str(value))
+                        else:
+                            table.add_row(full_key, "[empty list]", "[]")
+                    else:
+                        # Handle primitive values
+                        if value is None:
+                            display_value = "[dim]None[/dim]"
+                        elif isinstance(value, bool):
+                            display_value = f"[{'green' if value else 'red'}]{value}[/]"
+                        elif isinstance(value, str) and not value:
+                            display_value = "[dim](empty)[/dim]"
+                        else:
+                            display_value = str(value)
+                        
+                        table.add_row(full_key, type(value).__name__, display_value)
+            
+            title = "Current Configuration"
+            if section:
+                title += f" - {section.title()} Section"
+            
+            table = Table(title=title)
+            table.add_column("Setting", style="cyan", min_width=20)
+            table.add_column("Type", style="dim", width=10)
+            table.add_column("Value", min_width=30)
+            
+            add_config_rows(table, config_dict)
+            console.print(table)
+            
+            # Show configuration sources
+            console.print(f"\n[bold]Configuration Sources:[/bold]")
+            config_files = config_manager.list_config_files()
+            for config_type, path in config_files.items():
+                if path and path.exists():
+                    console.print(f"  [green]✓[/green] {config_type}: {path}")
+                else:
+                    console.print(f"  [dim]✗ {config_type}: Not found[/dim]")
+        
+    except ConfigError as e:
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Failed to load configuration: {e}")
         sys.exit(1)
 
 

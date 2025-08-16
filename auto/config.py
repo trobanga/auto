@@ -36,14 +36,27 @@ class ConfigManager:
         if git_root:
             project_config = git_root / ".auto" / "config.yaml"
             if project_config.exists():
-                self._project_config_path = project_config
-                logger.debug(f"Found project config: {project_config}")
+                # Ensure project config is different from user config
+                if project_config != self._user_config_path:
+                    self._project_config_path = project_config
+                    logger.debug(f"Found project config: {project_config}")
+                else:
+                    logger.debug(f"Skipping user config found as project config: {project_config}")
             else:
-                # Check in current directory and parent directories
+                # Check in current directory and parent directories, but only within git repo
                 current = Path.cwd()
+                # Only search within the git repository to avoid finding user config
+                search_paths = []
                 for parent in [current] + list(current.parents):
+                    # Stop searching if we've gone outside the git repository
+                    if git_root in parent.parents or parent == git_root:
+                        search_paths.append(parent)
+                    else:
+                        break
+                
+                for parent in search_paths:
                     config_path = parent / ".auto" / "config.yaml"
-                    if config_path.exists():
+                    if config_path.exists() and config_path != self._user_config_path:
                         self._project_config_path = config_path
                         logger.debug(f"Found project config: {config_path}")
                         break

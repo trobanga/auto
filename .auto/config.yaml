@@ -1,0 +1,35 @@
+version: '1.0'
+defaults:
+  auto_merge: false
+  delete_branch_on_merge: true
+  worktree_base: ../{project}-worktrees
+  max_review_iterations: 10
+github:
+  default_org: null
+  default_reviewer: null
+  pr_template: .github/pull_request_template.md
+  token: null
+  base_branch_detection: true
+  issue_fetch_timeout: 30
+linear:
+  api_key: null
+  workspace: null
+  auto_assign: true
+ai:
+  command: new-claude
+  implementation_agent: coder
+  review_agent: pull-request-reviewer
+  update_agent: coder
+  implementation_prompt: 'Implement the following issue: {description}'
+  review_prompt: Review this PR critically for bugs, security issues, performance,
+    and best practices. Be thorough and specific.
+  update_prompt: 'Address the following review comments: {comments}'
+workflows:
+  branch_naming: auto/{issue_type}/{issue_id}
+  commit_convention: conventional
+  ai_review_first: true
+  require_human_approval: true
+  test_command: null
+  review_check_interval: 60
+  worktree_cleanup_on_merge: true
+  worktree_conflict_resolution: prompt
