@@ -13,6 +13,7 @@ from auto.config import ConfigError, config_manager
 from auto.core import get_core
 from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
+from auto.utils.shell import run_command
 
 logger = get_logger(__name__)
 console = Console()
@@ -500,6 +501,136 @@ def merge(pr_id: str) -> None:
     """Merge PR after approval (Phase 5+)."""
     console.print(f"[blue]Info:[/blue] Would merge PR: {pr_id}")
     console.print("[yellow]Note:[/yellow] Full implementation coming in Phase 5")
+
+
+@cli.command()
+@click.option("--state", "-s", default="open", type=click.Choice(["open", "closed", "all"]), help="Filter by state (default: open)")
+@click.option("--assignee", "-a", help="Filter by assignee username")
+@click.option("--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)")
+@click.option("--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)")
+@click.option("--web", "-w", is_flag=True, help="Open issues in web browser")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed issue information")
+def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verbose: bool) -> None:
+    """List available issues for the current project."""
+    try:
+        from auto.integrations.github import GitHubIntegration, GitHubIntegrationError
+        
+        # If web flag is set, delegate to gh CLI
+        if web:
+            try:
+                result = run_command("gh issue list --web", check=True)
+                return
+            except Exception as e:
+                console.print(f"[red]Error:[/red] Failed to open issues in browser: {e}")
+                sys.exit(1)
+        
+        # Initialize GitHub integration
+        try:
+            github = GitHubIntegration()
+        except GitHubIntegrationError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        
+        # Convert labels tuple to list
+        labels_list = list(labels) if labels else None
+        
+        if verbose:
+            console.print(f"[blue]Info:[/blue] Fetching issues (state: {state}, limit: {limit})")
+            if assignee:
+                console.print(f"  Assignee filter: {assignee}")
+            if labels_list:
+                console.print(f"  Label filters: {', '.join(labels_list)}")
+        
+        # Fetch issues
+        try:
+            issues_list = github.list_issues(
+                state=state,
+                assignee=assignee,
+                labels=labels_list,
+                limit=limit
+            )
+        except GitHubIntegrationError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            sys.exit(1)
+        
+        if not issues_list:
+            console.print(f"[yellow]No {state} issues found.[/yellow]")
+            return
+        
+        # Display issues in a table
+        table = Table(title=f"GitHub Issues ({state})")
+        table.add_column("ID", style="cyan", width=8)
+        table.add_column("Title", min_width=30, max_width=60)
+        table.add_column("State", style="green", width=8)
+        table.add_column("Assignee", style="blue", width=12)
+        table.add_column("Labels", style="magenta", width=20)
+        table.add_column("Updated", style="dim", width=12)
+        
+        for issue in issues_list:
+            # Format title - truncate if too long but ensure beginning is shown
+            title_display = issue.title
+            if len(title_display) > 57:  # Leave room for ellipsis
+                title_display = title_display[:57] + "..."
+            
+            # Format assignee
+            assignee_display = issue.assignee or "—"
+            
+            # Format labels
+            labels_display = ", ".join(issue.labels[:3]) if issue.labels else "—"
+            if len(issue.labels) > 3:
+                labels_display += f" (+{len(issue.labels) - 3})"
+            
+            # Format updated time
+            if issue.updated_at:
+                updated_display = issue.updated_at.strftime("%Y-%m-%d")
+            else:
+                updated_display = "—"
+            
+            # Add status styling
+            status_style = {
+                "open": "[green]open[/green]",
+                "closed": "[red]closed[/red]",
+            }.get(issue.status.value.lower(), str(issue.status.value))
+            
+            table.add_row(
+                issue.id,
+                title_display,
+                status_style,
+                assignee_display,
+                labels_display,
+                updated_display
+            )
+        
+        console.print(table)
+        
+        # Show summary
+        console.print(f"\n[bold]Found {len(issues_list)} {state} issue(s)[/bold]")
+        
+        if verbose:
+            console.print(f"[dim]Use 'auto fetch <issue-id>' to start working on an issue[/dim]")
+            console.print(f"[dim]Use 'auto issues --web' to view issues in browser[/dim]")
+        
+    except Exception as e:
+        console.print(f"[red]Error:[/red] Unexpected error: {e}")
+        if verbose:
+            import traceback
+            console.print("[dim]" + traceback.format_exc() + "[/dim]")
+        sys.exit(1)
+
+
+# Add alias for issues command
+@cli.command("ls")
+@click.option("--state", "-s", default="open", type=click.Choice(["open", "closed", "all"]), help="Filter by state (default: open)")
+@click.option("--assignee", "-a", help="Filter by assignee username")
+@click.option("--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)")
+@click.option("--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)")
+@click.option("--web", "-w", is_flag=True, help="Open issues in web browser")
+@click.option("--verbose", "-v", is_flag=True, help="Show detailed issue information")
+def ls_alias(state: str, assignee: str, labels: tuple, limit: int, web: bool, verbose: bool) -> None:
+    """List available issues for the current project (alias for 'issues')."""
+    # Call the main issues command with same parameters
+    ctx = click.get_current_context()
+    ctx.invoke(issues, state=state, assignee=assignee, labels=labels, limit=limit, web=web, verbose=verbose)
 
 
 @cli.command()

@@ -122,6 +122,8 @@ auto <id>                    # Complete workflow with review cycles
 ### Subcommands for Control
 ```bash
 auto init                    # Initialize project config
+auto issues                  # List available issues for current project
+auto ls                      # Alias for 'auto issues'
 auto fetch <id>              # Just fetch issue details
 auto process <id>            # Fetch + AI implementation
 auto review <pr-id>          # Trigger AI review on existing PR
@@ -130,6 +132,19 @@ auto merge <pr-id>           # Complete merge after approval
 auto cleanup                 # Remove completed worktrees
 auto status                  # Show active worktrees/PRs with review status
 auto config <get|set> <key>  # Configuration management
+```
+
+### Issue Listing Commands
+```bash
+auto issues                  # List open issues (default)
+auto issues --state all      # List all issues (open + closed)
+auto issues --state closed   # List only closed issues
+auto issues --assignee user  # Filter by assignee
+auto issues --label bug      # Filter by label (can use multiple times)
+auto issues --limit 50       # Change result limit (default: 30)
+auto issues --web            # Open issues in web browser
+auto issues --verbose        # Show detailed information
+auto ls                      # Short alias for 'auto issues'
 ```
 
 ## State Management

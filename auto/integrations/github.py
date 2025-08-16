@@ -4,7 +4,7 @@ import json
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 from auto.models import GitHubRepository, Issue, IssueProvider, IssueStatus, IssueType
 from auto.utils.logger import get_logger
@@ -140,6 +140,108 @@ class GitHubIntegration:
                 raise GitHubIssueError(f"Failed to fetch issue #{clean_issue_id}: {e.stderr}")
         except json.JSONDecodeError as e:
             raise GitHubIssueError(f"Failed to parse issue data: {e}")
+    
+    def list_issues(
+        self, 
+        repository: Optional[GitHubRepository] = None,
+        state: str = "open",
+        assignee: Optional[str] = None,
+        labels: Optional[List[str]] = None,
+        limit: int = 30
+    ) -> List[Issue]:
+        """List GitHub issues for repository.
+        
+        Args:
+            repository: Repository context (auto-detected if None)
+            state: Filter by state: open, closed, or all (default: open)
+            assignee: Filter by assignee username
+            labels: Filter by label names
+            limit: Maximum number of issues to fetch (default: 30)
+            
+        Returns:
+            List of Issue objects
+            
+        Raises:
+            GitHubIssueError: If issues cannot be fetched
+        """
+        if repository is None:
+            repository = self.detect_repository()
+        
+        # Build gh issue list command
+        cmd_parts = [
+            "gh", "issue", "list",
+            "--repo", repository.full_name,
+            "--state", state,
+            "--limit", str(limit),
+            "--json", "number,title,body,state,labels,assignees,createdAt,updatedAt,url"
+        ]
+        
+        # Add optional filters
+        if assignee:
+            cmd_parts.extend(["--assignee", assignee])
+        
+        if labels:
+            for label in labels:
+                cmd_parts.extend(["--label", label])
+        
+        try:
+            # Execute command with timeout
+            result = run_command(
+                " ".join(cmd_parts),
+                check=True,
+                timeout=30
+            )
+            
+            issues_data = json.loads(result.stdout)
+            issues = []
+            
+            # Parse each issue
+            for issue_data in issues_data:
+                # Parse labels
+                labels_list = [label["name"] for label in issue_data.get("labels", [])]
+                
+                # Parse assignee
+                assignees = issue_data.get("assignees", [])
+                assignee_username = assignees[0]["login"] if assignees else None
+                
+                # Parse timestamps
+                created_at = None
+                updated_at = None
+                if issue_data.get("createdAt"):
+                    created_at = datetime.fromisoformat(issue_data["createdAt"].replace("Z", "+00:00"))
+                if issue_data.get("updatedAt"):
+                    updated_at = datetime.fromisoformat(issue_data["updatedAt"].replace("Z", "+00:00"))
+                
+                # Map state
+                state_map = {
+                    "OPEN": IssueStatus.OPEN,
+                    "CLOSED": IssueStatus.CLOSED,
+                }
+                status = state_map.get(issue_data.get("state", "OPEN"), IssueStatus.OPEN)
+                
+                issue = Issue(
+                    id=f"#{issue_data['number']}",
+                    provider=IssueProvider.GITHUB,
+                    title=issue_data["title"],
+                    description=issue_data.get("body", ""),
+                    status=status,
+                    assignee=assignee_username,
+                    labels=labels_list,
+                    url=issue_data.get("url"),
+                    created_at=created_at,
+                    updated_at=updated_at,
+                )
+                issues.append(issue)
+            
+            return issues
+            
+        except ShellError as e:
+            if "HTTP 404" in e.stderr:
+                raise GitHubIssueError(f"Repository {repository.full_name} not found or not accessible")
+            else:
+                raise GitHubIssueError(f"Failed to list issues: {e.stderr}")
+        except json.JSONDecodeError as e:
+            raise GitHubIssueError(f"Failed to parse issues data: {e}")
 
 
 def validate_github_auth() -> bool:
