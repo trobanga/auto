@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from ..models import ReviewComment, Issue, AIResponse, WorktreeInfo
 from ..integrations.github import GitHubIntegration
-from ..integrations.git import GitIntegration
+from ..integrations.git import GitWorktreeManager
 from ..integrations.ai import ClaudeIntegration
 from ..utils.logger import get_logger
 from .review_comment import (
@@ -124,7 +124,7 @@ class ReviewUpdateWorkflow:
     def __init__(
         self,
         github_integration: GitHubIntegration,
-        git_integration: GitIntegration,
+        git_integration: GitWorktreeManager,
         ai_integration: ClaudeIntegration,
         comment_processor: ReviewCommentProcessor
     ):

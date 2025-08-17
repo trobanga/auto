@@ -107,6 +107,7 @@ def mock_git_root(tmp_path, monkeypatch):
     
     monkeypatch.setattr("auto.utils.shell.get_git_root", mock_get_git_root)
     monkeypatch.setattr("auto.config.get_git_root", mock_get_git_root)
+    monkeypatch.setattr("auto.core.get_git_root", mock_get_git_root)
     
     return git_root
 
@@ -153,6 +154,29 @@ def mock_ai_integration(monkeypatch):
     monkeypatch.setattr("auto.integrations.ai.ClaudeIntegration", mock_claude_init)
     
     return mock
+
+
+@pytest.fixture
+def mock_auto_core(tmp_path, monkeypatch):
+    """Mock AutoCore to use isolated state directory."""
+    from auto.core import AutoCore
+    from auto.models import WorkflowState
+    
+    # Create a mock state directory
+    state_dir = tmp_path / ".auto" / "state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Mock the AutoCore class
+    mock_core = Mock(spec=AutoCore)
+    mock_core.state_dir = state_dir
+    mock_core.get_workflow_states.return_value = []  # Empty by default
+    mock_core.get_workflow_state.return_value = None
+    
+    # Mock the global core instance
+    monkeypatch.setattr("auto.core.core", mock_core)
+    monkeypatch.setattr("auto.cli.get_core", lambda: mock_core)
+    
+    return mock_core
 
 
 @pytest.fixture

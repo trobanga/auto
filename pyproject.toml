@@ -72,5 +72,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-# Configure anyio to only use asyncio backend to avoid trio compatibility issues
 anyio_backends = ["asyncio"]
+markers = [
+    "asyncio: mark test as async test",
+    "anyio: mark test as async test using anyio",
+]

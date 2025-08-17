@@ -152,9 +152,15 @@ class ReviewCommentProcessor:
         ]
         
         self._style_patterns = [
-            r'\b(style|format|naming|convention|consistent)\b',
-            r'\b(indent|spacing|line length|camelCase|snake_case)\b',
-            r'\b(typo|grammar|comment|documentation)\b'
+            r'\b(style|format|naming|convention|consistent|inconsistent)\b',
+            r'\b(indent|indentation|spacing|spaces|line length|long|camelCase|snake_case)\b',
+            r'\b(typo|grammar|wrapped|wrap)\b'
+        ]
+        
+        self._documentation_patterns = [
+            r'\b(document|documentation|docstring|readme|comment|explain)\b',
+            r'\b(add.*comment|missing.*comment|missing.*docstring)\b',
+            r'\b(update.*readme|api.*documentation)\b'
         ]
 
     async def analyze_review_comments(
@@ -473,11 +479,7 @@ class ReviewCommentProcessor:
         """Categorize comment based on content analysis."""
         comment_lower = comment_text.lower()
         
-        # Check patterns in order of importance
-        for pattern in self._bug_patterns:
-            if re.search(pattern, comment_lower, re.IGNORECASE):
-                return CommentCategory.BUG
-        
+        # Check patterns in order of specificity (most specific first)
         for pattern in self._security_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.SECURITY
@@ -490,12 +492,18 @@ class ReviewCommentProcessor:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.STYLE
         
+        for pattern in self._documentation_patterns:
+            if re.search(pattern, comment_lower, re.IGNORECASE):
+                return CommentCategory.DOCUMENTATION
+        
+        for pattern in self._bug_patterns:
+            if re.search(pattern, comment_lower, re.IGNORECASE):
+                return CommentCategory.BUG
+        
         # Additional category detection
         if re.search(r'\b(test|spec|coverage|mock)\b', comment_lower):
             return CommentCategory.TESTING
         
-        if re.search(r'\b(document|readme|comment|explain)\b', comment_lower):
-            return CommentCategory.DOCUMENTATION
         
         if re.search(r'\?|unclear|explain|why|how', comment_lower):
             return CommentCategory.QUESTION

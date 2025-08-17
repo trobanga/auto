@@ -14,7 +14,7 @@ from unittest.mock import Mock, AsyncMock, patch, MagicMock
 
 from auto.models import ReviewComment, Issue, AIResponse, WorktreeInfo
 from auto.integrations.github import GitHubIntegration
-from auto.integrations.git import GitIntegration
+from auto.integrations.git import GitWorktreeManager
 from auto.integrations.ai import ClaudeIntegration
 from auto.workflows.review_comment import (
     ReviewCommentProcessor,
@@ -47,7 +47,7 @@ def mock_github_integration():
 @pytest.fixture
 def mock_git_integration():
     """Create mock Git integration."""
-    mock_git = Mock(spec=GitIntegration)
+    mock_git = Mock(spec=GitWorktreeManager)
     mock_git.add_file = AsyncMock()
     mock_git.commit_changes = AsyncMock(return_value="abc123")
     mock_git.push_changes = AsyncMock(return_value=True)

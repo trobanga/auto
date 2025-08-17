@@ -90,17 +90,17 @@ class TestCLI:
         assert "User" in result.output
         assert "✓ Exists" in result.output
     
-    def test_status_empty(self, runner, temp_home):
+    def test_status_empty(self, runner, temp_home, mock_auto_core):
         """Test status command with no workflows."""
         result = runner.invoke(cli, ["status"])
         assert result.exit_code == 0
         assert "No active workflows found" in result.output
     
-    def test_cleanup_empty(self, runner, temp_home):
+    def test_cleanup_empty(self, runner, temp_home, mock_auto_core):
         """Test cleanup command with no workflows."""
         result = runner.invoke(cli, ["cleanup"])
         assert result.exit_code == 0
-        assert "No completed workflows to clean up" in result.output
+        assert "No workflows to clean up" in result.output
     
     def test_issue_id_parsing(self, runner, temp_home):
         """Test issue ID parsing in stub commands."""
