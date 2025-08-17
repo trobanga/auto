@@ -78,7 +78,7 @@ async def create_pull_request_workflow(
         await push_branch_to_remote(workflow_state)
         
         # Create GitHub PR
-        github_integration = GitHubIntegration(config.github)
+        github_integration = GitHubIntegration()
         pr = await create_github_pr(
             github_integration=github_integration,
             pr_metadata=pr_metadata,

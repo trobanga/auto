@@ -178,7 +178,6 @@ def process_issue_workflow(
                     logger.warning("PR creation completed but no PR number available")
                     
             except PRCreationError as e:
-                logger.error(f"PR creation failed: {e}")
                 state.update_status(WorkflowStatus.FAILED)
                 state.metadata['pr_error'] = str(e)
                 core.save_workflow_state(state)
@@ -534,7 +533,6 @@ async def enhanced_process_issue_workflow(
                     logger.warning("PR creation completed but no PR number available")
                     
             except PRCreationError as e:
-                logger.error(f"PR creation failed: {e}")
                 state.update_status(WorkflowStatus.FAILED)
                 state.metadata['pr_error'] = str(e)
                 core.save_workflow_state(state)
