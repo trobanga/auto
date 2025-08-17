@@ -315,7 +315,7 @@ class ClaudeIntegration:
             
             # Activity monitoring with stale detection
             if self.config.enable_activity_monitoring:
-                return await self._monitor_ai_command_with_activity(process, start_time, agent)
+                return await self._monitor_ai_command_with_activity(process, start_time, agent, prompt)
             else:
                 # Fallback to simple communicate() for backward compatibility
                 stdout, stderr = await process.communicate()
@@ -348,7 +348,8 @@ class ClaudeIntegration:
         self,
         process: asyncio.subprocess.Process,
         start_time: float,
-        agent: str
+        agent: str,
+        prompt: str
     ) -> AICommandResult:
         """
         Monitor AI command execution with activity tracking and stale detection.
@@ -357,6 +358,7 @@ class ClaudeIntegration:
             process: The subprocess to monitor
             start_time: Command start time
             agent: Agent name for display
+            prompt: Prompt sent to the agent
             
         Returns:
             AICommandResult with execution details
@@ -366,7 +368,6 @@ class ClaudeIntegration:
         from rich.live import Live
         from rich.text import Text
         from rich.spinner import Spinner
-        from rich.layout import Layout
         from rich.panel import Panel
         
         console = Console()
@@ -380,7 +381,7 @@ class ClaudeIntegration:
         output_bytes = 0
         error_bytes = 0
         
-        # Interactive controls - can be toggled by setting environment variable
+        # Output display setting
         import os
         show_output_toggle = self.config.show_ai_output or os.getenv('AUTO_SHOW_AI_OUTPUT', '').lower() in ('1', 'true', 'yes')
         
@@ -450,6 +451,15 @@ class ClaudeIntegration:
             status_text = Text()
             status_text.append(f"🤖 AI Agent: ", style="bold cyan")
             status_text.append(f"{agent}\n", style="bright_blue")
+            
+            # Show prompt (truncated)
+            status_text.append(f"💬 Prompt: ", style="bold magenta")
+            prompt_preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
+            # Remove agent prefix if present
+            if prompt_preview.startswith(f"agent-{agent}, "):
+                prompt_preview = prompt_preview[len(f"agent-{agent}, "):]
+            status_text.append(f"{prompt_preview}\n", style="dim white")
+            
             status_text.append(f"⏱️  Elapsed: ", style="bold yellow")
             status_text.append(f"{elapsed_str}\n", style="bright_yellow")
             status_text.append(f"📡 Last Activity: ", style="bold green")
@@ -479,13 +489,10 @@ class ClaudeIntegration:
                 status_text.append(f"🆔 PID: ", style="bold white")
                 status_text.append(f"{process.pid}\n", style="dim white")
             
-            # Show keyboard shortcuts
-            status_text.append(f"⌨️  Controls: ", style="bold white")
-            status_text.append(f"Ctrl+C = quit", style="dim cyan")
-            if not show_output_toggle:
-                status_text.append(f" | set AUTO_SHOW_AI_OUTPUT=1 to see raw output", style="dim yellow")
-            status_text.append("\n")
-            
+            # Show output status
+            if show_output_toggle:
+                status_text.append(f"📺 Output Display: ", style="bold white")
+
             if show_output_toggle and output_lines:
                 # Show recent output lines
                 recent_lines = output_lines[-3:] if len(output_lines) > 3 else output_lines
@@ -503,30 +510,14 @@ class ClaudeIntegration:
             
             return Panel(status_text, title="AI Command Monitor", border_style="cyan")
         
-        # Simpler keyboard handling using signal or file-based approach
-        import signal
-        import os
-        keyboard_quit_requested = False
-        
-        def signal_handler(signum, frame):
-            """Handle Ctrl+C to quit."""
-            nonlocal keyboard_quit_requested
-            keyboard_quit_requested = True
-            self.logger.info("User requested quit (Ctrl+C)")
-            try:
-                process.terminate()
-            except:
-                pass
-        
-        # Set up signal handler for Ctrl+C
-        original_handler = signal.signal(signal.SIGINT, signal_handler)
+        # No special keyboard handling needed - Ctrl+C works by default
         
         # Start monitoring with Rich Live display
         try:
             with Live(create_status_display(), console=console, refresh_per_second=2) as live:
                 while True:
-                    # Check if process completed or quit requested
-                    if process.returncode is not None or keyboard_quit_requested:
+                    # Check if process completed
+                    if process.returncode is not None:
                         break
                     
                     # Try to read output
@@ -651,8 +642,8 @@ class ClaudeIntegration:
                 duration=duration
             )
         finally:
-            # Restore original signal handler
-            signal.signal(signal.SIGINT, original_handler)
+            # No cleanup needed for keyboard handling
+            pass
         
         duration = time.time() - start_time
         success = process.returncode == 0

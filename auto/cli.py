@@ -19,6 +19,27 @@ logger = get_logger(__name__)
 console = Console()
 
 
+def enable_verbose_logging() -> None:
+    """Enable debug logging for both logger and console handler."""
+    import logging
+    from rich.logging import RichHandler
+    
+    auto_logger = logging.getLogger("auto")
+    auto_logger.setLevel(logging.DEBUG)
+    
+    # Also set all child loggers to DEBUG level
+    for name, child_logger in logging.Logger.manager.loggerDict.items():
+        if isinstance(child_logger, logging.Logger) and name.startswith("auto"):
+            child_logger.setLevel(logging.DEBUG)
+    
+    # Also set console handler to DEBUG level
+    for handler in auto_logger.handlers:
+        if isinstance(handler, (RichHandler, logging.StreamHandler)) and not isinstance(handler, logging.FileHandler):
+            handler.setLevel(logging.DEBUG)
+    
+    logger.debug("Verbose logging enabled")
+
+
 @click.group(invoke_without_command=True)
 @click.option("--version", is_flag=True, help="Show version and exit")
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging")
@@ -34,9 +55,7 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
         sys.exit(0)
     
     if verbose:
-        import logging
-        logging.getLogger("auto").setLevel(logging.DEBUG)
-        logger.debug("Verbose logging enabled")
+        enable_verbose_logging()
     
     # If no subcommand and no flags, show help
     if ctx.invoked_subcommand is None and not version:
@@ -456,6 +475,7 @@ def fetch(issue_id: str, verbose: bool) -> None:
         identifier = IssueIdentifier.parse(issue_id)
         
         if verbose:
+            enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Parsing {identifier.provider.value} issue: {identifier.issue_id}")
         
         # Validate prerequisites
@@ -545,6 +565,7 @@ def implement(
         identifier = IssueIdentifier.parse(issue_id)
         
         if verbose:
+            enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Implementing {identifier.provider.value} issue: {identifier.issue_id}")
         
         # Get core and existing state
@@ -725,6 +746,7 @@ def process(
         identifier = IssueIdentifier.parse(issue_id)
         
         if verbose:
+            enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Processing {identifier.provider.value} issue: {identifier.issue_id}")
             if no_ai:
                 console.print("[blue]Info:[/blue] AI implementation step will be skipped")
@@ -912,6 +934,7 @@ def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verb
         labels_list = list(labels) if labels else None
         
         if verbose:
+            enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Fetching issues (state: {state}, limit: {limit})")
             if assignee:
                 console.print(f"  Assignee filter: {assignee}")
@@ -1039,6 +1062,7 @@ def show(issue_id: str, web: bool, verbose: bool) -> None:
             sys.exit(1)
         
         if verbose:
+            enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}")
         
         # Fetch issue details
