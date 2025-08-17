@@ -181,6 +181,49 @@ class ClaudeIntegration:
             self.logger.error(f"AI update failed for issue {issue.id}: {e}")
             raise
 
+    async def execute_update_from_review(
+        self,
+        repository: str,
+        comments: str,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Execute AI update to address review comments (review workflow variant).
+        
+        Args:
+            repository: Repository name
+            comments: Formatted review comments to address
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing update results
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            prompt = self._format_review_update_prompt(repository, comments, custom_prompt)
+            
+            self.logger.info(f"Running AI update for review comments in {repository}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.update_agent
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"AI review update failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "review_update")
+            
+            self.logger.info(f"AI review update completed for {repository}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"AI review update failed for {repository}: {e}")
+            raise
+
     async def generate_pr_description(
         self,
         issue: Issue,
@@ -823,18 +866,249 @@ This PR implements the requested functionality with {len(file_changes)} file cha
         
         return formatted_prompt
 
-    def _format_review_prompt(
+    async def _format_review_prompt(
         self, 
         pr_number: int, 
         repository: str,
         custom_prompt: Optional[str] = None
     ) -> str:
-        """Format review prompt for PR review."""
+        """
+        Format comprehensive review prompt for PR review.
+        
+        Gathers PR details, diff, and applies review template with proper context.
+        """
         if custom_prompt:
             return f"Review PR #{pr_number} in {repository}:\n\n{custom_prompt}"
         
-        template = self.config.review_prompt
-        return f"Review PR #{pr_number} in {repository}:\n\n{template}"
+        try:
+            # Import here to avoid circular imports
+            from ..integrations.review import GitHubReviewIntegration
+            from ..integrations.prompts import PromptManager
+            from ..utils.shell import run_command
+            
+            # Get PR details
+            pr_details = await self._get_pr_details(pr_number, repository)
+            
+            # Get PR diff
+            pr_diff = await self._get_pr_diff(pr_number, repository)
+            
+            # Load review template
+            prompt_manager = PromptManager()
+            try:
+                template = prompt_manager.load_template("review")
+                
+                # Format template with variables
+                formatted_prompt = template.content.format(
+                    repository=repository,
+                    pr_number=pr_number,
+                    pr_description=pr_details.get("description", ""),
+                    changed_files=", ".join(pr_details.get("changed_files", [])),
+                    diff_content=pr_diff
+                )
+                
+                return formatted_prompt
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to load review template: {e}")
+                # Fallback to basic template
+                return self._create_fallback_review_prompt(pr_number, repository, pr_details, pr_diff)
+                
+        except Exception as e:
+            self.logger.error(f"Error formatting review prompt: {e}")
+            # Final fallback
+            template = self.config.review_prompt or "Please review this pull request thoroughly for bugs, security issues, performance, and code quality."
+            return f"Review PR #{pr_number} in {repository}:\n\n{template}"
+
+    async def _get_pr_details(self, pr_number: int, repository: str) -> Dict[str, Any]:
+        """
+        Get PR details including description and changed files.
+        
+        Args:
+            pr_number: Pull request number
+            repository: Repository name
+            
+        Returns:
+            Dictionary with PR details
+        """
+        try:
+            from ..utils.shell import run_command
+            
+            # Get PR basic details
+            result = await run_command(
+                f"gh pr view {pr_number} --repo {repository} "
+                f"--json title,body,files",
+                timeout=30
+            )
+            
+            pr_data = json.loads(result.stdout)
+            
+            # Extract changed files
+            changed_files = []
+            if "files" in pr_data:
+                for file_info in pr_data["files"]:
+                    changed_files.append(file_info.get("path", ""))
+            
+            return {
+                "title": pr_data.get("title", ""),
+                "description": f"{pr_data.get('title', '')}\n\n{pr_data.get('body', '')}",
+                "changed_files": changed_files
+            }
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get PR details: {e}")
+            return {
+                "title": f"PR #{pr_number}",
+                "description": f"Pull request #{pr_number} in {repository}",
+                "changed_files": []
+            }
+    
+    async def _get_pr_diff(self, pr_number: int, repository: str) -> str:
+        """
+        Get PR diff content.
+        
+        Args:
+            pr_number: Pull request number
+            repository: Repository name
+            
+        Returns:
+            PR diff as string
+        """
+        try:
+            from ..utils.shell import run_command
+            
+            # Get PR diff
+            result = await run_command(
+                f"gh pr diff {pr_number} --repo {repository}",
+                timeout=30
+            )
+            
+            return result.stdout
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get PR diff: {e}")
+            return f"[Unable to fetch diff for PR #{pr_number}]"
+    
+    def _create_fallback_review_prompt(
+        self, 
+        pr_number: int, 
+        repository: str, 
+        pr_details: Dict[str, Any], 
+        pr_diff: str
+    ) -> str:
+        """
+        Create fallback review prompt when template loading fails.
+        
+        Args:
+            pr_number: Pull request number
+            repository: Repository name
+            pr_details: PR details dictionary
+            pr_diff: PR diff content
+            
+        Returns:
+            Fallback review prompt
+        """
+        prompt = f"""Review this pull request thoroughly for bugs, security issues, performance, and code quality.
+
+**PR Context:**
+Repository: {repository}
+PR Number: #{pr_number}
+Title: {pr_details.get('title', 'N/A')}
+
+**Description:**
+{pr_details.get('description', 'No description available')}
+
+**Files Changed:**
+{', '.join(pr_details.get('changed_files', [])) or 'No files listed'}
+
+**Code Changes:**
+```diff
+{pr_diff}
+```
+
+**Please provide:**
+1. Overall assessment of the code quality
+2. Any bugs or potential issues identified
+3. Security concerns
+4. Performance considerations
+5. Suggestions for improvement
+6. Recommendation: APPROVE, REQUEST_CHANGES, or COMMENT
+
+Be thorough and specific in your feedback."""
+
+        return prompt
+
+    def _format_review_update_prompt(
+        self,
+        repository: str,
+        comments: str,
+        custom_prompt: Optional[str] = None
+    ) -> str:
+        """
+        Format prompt for addressing review comments.
+        
+        Args:
+            repository: Repository name
+            comments: Formatted review comments
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            Formatted prompt for AI update
+        """
+        if custom_prompt:
+            return f"Repository: {repository}\n\nReview Comments:\n{comments}\n\n{custom_prompt}"
+        
+        try:
+            # Try to load review update template
+            from ..integrations.prompts import PromptManager
+            
+            prompt_manager = PromptManager()
+            try:
+                template = prompt_manager.load_template("review-update")
+                
+                # Format template with variables
+                formatted_prompt = template.content.format(
+                    repository=repository,
+                    review_comments=comments,
+                    pr_description="Review comments update"  # Basic fallback
+                )
+                
+                return formatted_prompt
+                
+            except Exception as e:
+                self.logger.warning(f"Failed to load review-update template: {e}")
+                # Fallback to basic template
+                return self._create_fallback_update_prompt(repository, comments)
+                
+        except Exception as e:
+            self.logger.error(f"Error formatting review update prompt: {e}")
+            # Final fallback
+            template = self.config.update_prompt or "Please address the following review comments:"
+            return f"Repository: {repository}\n\n{template}\n\nReview Comments:\n{comments}"
+    
+    def _create_fallback_update_prompt(self, repository: str, comments: str) -> str:
+        """Create fallback update prompt when template loading fails."""
+        return f"""You are tasked with addressing review comments on a pull request.
+
+**Repository:** {repository}
+
+**Review Comments to Address:**
+{comments}
+
+**Instructions:**
+1. Carefully read and understand each review comment
+2. Make the necessary code changes to address the feedback
+3. Ensure your changes don't introduce new issues
+4. Test your changes if possible
+5. Commit your changes with clear commit messages
+
+**Focus Areas:**
+- Fix any bugs or logic errors mentioned
+- Address security concerns
+- Implement performance improvements
+- Improve code quality and readability
+- Add or update tests as needed
+
+Please implement the necessary changes to address all valid review feedback."""
 
     def _format_update_prompt(
         self, 

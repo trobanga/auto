@@ -30,6 +30,19 @@ from auto.workflows.pr_create import (
     PRCreationError,
 )
 
+from auto.workflows.review import (
+    execute_review_cycle,
+    trigger_ai_review,
+    wait_for_human_review,
+    process_review_comments,
+    check_cycle_completion,
+    trigger_ai_update,
+    initiate_review_cycle,
+    ReviewCycleStatus,
+    ReviewCycleState,
+    ReviewWorkflowError,
+)
+
 __all__ = [
     # Fetch workflow
     "fetch_issue_workflow",
@@ -56,4 +69,16 @@ __all__ = [
     "generate_pr_metadata",
     "generate_pr_description",
     "PRCreationError",
+    
+    # Review workflow
+    "execute_review_cycle",
+    "trigger_ai_review",
+    "wait_for_human_review",
+    "process_review_comments",
+    "check_cycle_completion",
+    "trigger_ai_update",
+    "initiate_review_cycle",
+    "ReviewCycleStatus",
+    "ReviewCycleState",
+    "ReviewWorkflowError",
 ]
