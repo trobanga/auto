@@ -17,6 +17,33 @@ from ..config import Config
 logger = get_logger(__name__)
 
 
+def truncate_pr_description(description: str) -> str:
+    """
+    Truncate PR description to fit GitHub's 65536 character limit.
+    
+    Args:
+        description: Original PR description
+        
+    Returns:
+        Truncated description with notice if truncation was necessary
+    """
+    MAX_PR_BODY_LENGTH = 65000  # Leave some buffer for truncation note
+    if len(description) <= MAX_PR_BODY_LENGTH:
+        return description
+    
+    logger.warning(f"PR description is {len(description)} characters, truncating to fit GitHub's 65536 limit")
+    truncated_description = description[:MAX_PR_BODY_LENGTH]
+    
+    # Find the last complete line to avoid cutting off mid-sentence
+    last_newline = truncated_description.rfind('\n')
+    if last_newline > MAX_PR_BODY_LENGTH - 1000:  # Only if close to the limit
+        truncated_description = truncated_description[:last_newline]
+    
+    # Add truncation notice
+    truncated_description += f"\n\n---\n\n**Note:** This PR description was truncated from {len(description)} characters to fit GitHub's 65536 character limit."
+    return truncated_description
+
+
 class PRCreationError(Exception):
     """Exception raised for PR creation workflow errors."""
     pass
@@ -222,7 +249,8 @@ async def generate_pr_description(
             description_parts.append("## Testing")
             description_parts.append(f"- [ ] Automated tests: `{config.workflows.test_command}`")
         
-        return "\n".join(description_parts)
+        description = "\n".join(description_parts)
+        return truncate_pr_description(description)
         
     except Exception as e:
         logger.warning(f"Failed to generate Claude-based PR description: {e}")
@@ -274,7 +302,8 @@ def _generate_fallback_pr_description(
     # Add issue reference
     description_parts.append(f"Closes {issue.id}")
     
-    return "\n".join(description_parts)
+    description = "\n".join(description_parts)
+    return truncate_pr_description(description)
 
 
 def load_pr_template(config: Config) -> Optional[str]:

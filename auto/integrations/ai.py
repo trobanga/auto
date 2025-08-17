@@ -513,7 +513,11 @@ Include appropriate sections like ## Summary, ## Changes, etc."""
             # Extract the actual PR description from the streaming JSON output
             description = self._extract_result_from_output(result.output)
             
-            self.logger.info(f"PR description generated for issue {issue.id}")
+            # GitHub has a 65536 character limit for PR bodies - truncate if necessary
+            from ..workflows.pr_create import truncate_pr_description
+            description = truncate_pr_description(description)
+            
+            self.logger.info(f"PR description generated for issue {issue.id} ({len(description)} characters)")
             return description
             
         except Exception as e:
