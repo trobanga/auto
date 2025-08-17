@@ -81,7 +81,7 @@ def mock_config():
     config.github.default_reviewer = "reviewer1"
     config.github.default_branch = "main"
     config.workflows.test_command = "npm test"
-    config.workflows.implementation_commit_message = "feat: implement {issue_id} - {issue_title}"
+    config.workflows.implementation_commit_message = "feat: implement {id} - {title}"
     return config
 
 

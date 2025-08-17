@@ -353,11 +353,11 @@ class PromptManager:
     ) -> Dict[str, str]:
         """Build variable context for template expansion."""
         variables = {
-            'issue_id': str(issue.id),
-            'issue_title': issue.title or '',
-            'issue_description': issue.description or '',
-            'issue_labels': ', '.join(issue.labels) if issue.labels else '',
-            'issue_assignee': issue.assignee or '',
+            'id': str(issue.id),
+            'title': issue.title or '',
+            'description': issue.description or '',
+            'labels': ', '.join(issue.labels) if issue.labels else '',
+            'assignee': issue.assignee or '',
             'repository': getattr(issue, 'repository', ''),
             'branch': getattr(issue, 'branch', ''),
         }

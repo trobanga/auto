@@ -244,8 +244,8 @@ class GitWorktreeManager:
         
         # Replace placeholders
         branch_name = pattern.format(
-            issue_type=issue_type,
-            issue_id=issue_id,
+            type=issue_type,
+            id=issue_id,
         )
         
         # Sanitize branch name for git

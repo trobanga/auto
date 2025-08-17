@@ -142,7 +142,7 @@ class TestConfig:
         assert config.defaults.max_review_iterations == 10
         assert config.ai.command == "claude"
         assert config.ai.implementation_agent == "coder"
-        assert config.workflows.branch_naming == "auto/{issue_type}/{issue_id}"
+        assert config.workflows.branch_naming == "auto/{type}/{id}"
     
     def test_config_with_overrides(self):
         """Test configuration with overrides."""
@@ -156,4 +156,4 @@ class TestConfig:
         assert config.ai.command == "custom-ai"
         assert config.ai.implementation_agent == "custom-coder"
         # Defaults should still be preserved
-        assert config.workflows.branch_naming == "auto/{issue_type}/{issue_id}"
+        assert config.workflows.branch_naming == "auto/{type}/{id}"

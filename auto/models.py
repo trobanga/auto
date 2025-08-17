@@ -360,7 +360,7 @@ class AIConfig(BaseModel):
 class WorkflowsConfig(BaseModel):
     """Workflow configuration settings."""
     
-    branch_naming: str = Field(default="auto/{issue_type}/{issue_id}", description="Branch naming pattern")
+    branch_naming: str = Field(default="auto/{type}/{id}", description="Branch naming pattern")
     commit_convention: str = Field(default="conventional", description="Commit convention")
     ai_review_first: bool = Field(default=True, description="AI reviews before human")
     require_human_approval: bool = Field(default=True, description="Require human approval")
@@ -371,7 +371,7 @@ class WorkflowsConfig(BaseModel):
     auto_create_pr: bool = Field(default=True, description="Auto-create PR after implementation")
     pr_draft_mode: bool = Field(default=False, description="Create draft PRs by default")
     implementation_commit_message: str = Field(
-        default="feat: implement {issue_id} - {issue_title}",
+        default="feat: implement {id} - {title}",
         description="Commit message template for implementations"
     )
 

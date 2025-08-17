@@ -28,7 +28,7 @@ def mock_config():
     
     # Mock workflows
     workflows = Mock()
-    workflows.branch_naming = "auto/{issue_type}/{issue_id}"
+    workflows.branch_naming = "auto/{type}/{id}"
     workflows.worktree_conflict_resolution = "prompt"
     config.workflows = workflows
     

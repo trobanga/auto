@@ -1,11 +1,11 @@
 name: performance
 description: Performance optimization implementation template
 prompt: |
-  Implement the following issue with a strong focus on performance optimization: {issue_description}
+  Implement the following issue with a strong focus on performance optimization: {description}
 
   ## Issue Details
-  - **ID**: {issue_id}
-  - **Title**: {issue_title}
+  - **ID**: {id}
+  - **Title**: {title}
   - **Labels**: {labels}
   - **Assignee**: {assignee}
 
@@ -49,9 +49,9 @@ prompt: |
   Any additional notes or considerations
 
 variables:
-  - issue_id
-  - issue_title
-  - issue_description
+  - id
+  - title
+  - description
   - acceptance_criteria
   - repository
   - branch

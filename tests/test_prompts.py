@@ -42,9 +42,9 @@ def sample_template():
     """Sample prompt template for testing."""
     return PromptTemplate(
         name="test-template",
-        content="Implement {issue_title} with focus on {custom_focus}",
+        content="Implement {title} with focus on {custom_focus}",
         description="Test template",
-        variables=["issue_title", "custom_focus"],
+        variables=["title", "custom_focus"],
         metadata={"category": "implementation"}
     )
 
@@ -123,7 +123,7 @@ class TestPromptManager:
         with patch.object(prompt_manager, 'load_prompt_template') as mock_load:
             mock_template = PromptTemplate(
                 name="security-focused",
-                content="Implement {issue_title} with security focus",
+                content="Implement {title} with security focus",
                 description="Security template"
             )
             mock_load.return_value = mock_template
@@ -160,7 +160,7 @@ class TestPromptManager:
 
     def test_resolve_prompt_with_variables(self, prompt_manager, sample_issue):
         """Test prompt resolution with custom variables."""
-        template_content = "Implement {issue_title} for {target_platform}"
+        template_content = "Implement {title} for {target_platform}"
         variables = {"target_platform": "mobile"}
         
         result = prompt_manager.resolve_prompt(
@@ -192,8 +192,8 @@ class TestPromptManager:
         template_file = template_dir / "test-template.yaml"
         template_data = {
             "description": "Test template",
-            "content": "Implement {issue_title} with focus",
-            "variables": ["issue_title"],
+            "content": "Implement {title} with focus",
+            "variables": ["title"],
             "metadata": {"category": "test"}
         }
         template_file.write_text(yaml.dump(template_data))
@@ -202,9 +202,9 @@ class TestPromptManager:
             result = prompt_manager.load_prompt_template("test-template")
         
         assert result.name == "test-template"
-        assert result.content == "Implement {issue_title} with focus"
+        assert result.content == "Implement {title} with focus"
         assert result.description == "Test template"
-        assert result.variables == ["issue_title"]
+        assert result.variables == ["title"]
         assert result.metadata == {"category": "test"}
 
     def test_load_prompt_template_not_found(self, prompt_manager):
@@ -217,7 +217,7 @@ class TestPromptManager:
 
     def test_expand_prompt_variables(self, prompt_manager, sample_issue):
         """Test prompt variable expansion."""
-        prompt = "Issue: {issue_id} - {issue_title} ({issue_labels})"
+        prompt = "Issue: {id} - {title} ({labels})"
         
         result = prompt_manager.expand_prompt_variables(prompt, sample_issue)
         
@@ -227,7 +227,7 @@ class TestPromptManager:
 
     def test_expand_prompt_variables_with_additional(self, prompt_manager, sample_issue):
         """Test prompt variable expansion with additional variables."""
-        prompt = "Issue: {issue_title} for {platform}"
+        prompt = "Issue: {title} for {platform}"
         additional_vars = {"platform": "web"}
         
         result = prompt_manager.expand_prompt_variables(
@@ -241,7 +241,7 @@ class TestPromptManager:
 
     def test_expand_prompt_variables_missing_variable(self, prompt_manager, sample_issue):
         """Test prompt variable expansion with missing variable."""
-        prompt = "Issue: {issue_title} - {missing_var}"
+        prompt = "Issue: {title} - {missing_var}"
         
         # Should not raise, should handle gracefully
         result = prompt_manager.expand_prompt_variables(prompt, sample_issue)
@@ -285,7 +285,7 @@ class TestPromptManager:
         with patch.object(prompt_manager, '_get_user_templates_dir', return_value=tmp_path):
             template_file = prompt_manager.create_template(
                 "new-template",
-                "Implement {issue_title} carefully",
+                "Implement {title} carefully",
                 "Careful implementation template"
             )
             
@@ -297,8 +297,8 @@ class TestPromptManager:
                 data = yaml.safe_load(f)
             
             assert data["description"] == "Careful implementation template"
-            assert data["content"] == "Implement {issue_title} carefully"
-            assert "issue_title" in data["variables"]
+            assert data["content"] == "Implement {title} carefully"
+            assert "title" in data["variables"]
 
     def test_load_prompt_from_file(self, prompt_manager, tmp_path):
         """Test loading prompt from file."""
@@ -400,17 +400,17 @@ class TestPromptManager:
         
         context = prompt_manager._build_variable_context(sample_issue, additional_vars)
         
-        assert context["issue_id"] == "#123"
-        assert context["issue_title"] == "Add dark mode support"
-        assert context["issue_description"] == sample_issue.description
-        assert context["issue_labels"] == "feature, ui"
-        assert context["issue_assignee"] == "developer"
+        assert context["id"] == "#123"
+        assert context["title"] == "Add dark mode support"
+        assert context["description"] == sample_issue.description
+        assert context["labels"] == "feature, ui"
+        assert context["assignee"] == "developer"
         assert context["custom_var"] == "custom_value"
 
     def test_safe_format_success(self, prompt_manager):
         """Test safe formatting with all variables available."""
-        template = "Issue {issue_id}: {title}"
-        variables = {"issue_id": "#123", "title": "Test"}
+        template = "Issue {id}: {title}"
+        variables = {"id": "#123", "title": "Test"}
         
         result = prompt_manager._safe_format(template, variables)
         
@@ -418,8 +418,8 @@ class TestPromptManager:
 
     def test_safe_format_missing_variable(self, prompt_manager):
         """Test safe formatting with missing variable."""
-        template = "Issue {issue_id}: {missing_var}"
-        variables = {"issue_id": "#123"}
+        template = "Issue {id}: {missing_var}"
+        variables = {"id": "#123"}
         
         result = prompt_manager._safe_format(template, variables)
         
@@ -428,8 +428,8 @@ class TestPromptManager:
 
     def test_regex_format(self, prompt_manager):
         """Test regex-based formatting."""
-        template = "Issue {issue_id}: {title} - {missing}"
-        variables = {"issue_id": "#123", "title": "Test"}
+        template = "Issue {id}: {title} - {missing}"
+        variables = {"id": "#123", "title": "Test"}
         
         result = prompt_manager._regex_format(template, variables)
         
@@ -437,11 +437,11 @@ class TestPromptManager:
 
     def test_extract_template_variables(self, prompt_manager):
         """Test template variable extraction."""
-        content = "Implement {issue_title} for {platform} with {focus}"
+        content = "Implement {title} for {platform} with {focus}"
         
         variables = prompt_manager._extract_template_variables(content)
         
-        assert variables == ["focus", "issue_title", "platform"]  # Sorted
+        assert variables == ["focus", "platform", "title"]  # Sorted
 
 
 class TestConvenienceFunctions:
@@ -483,7 +483,7 @@ class TestConvenienceFunctions:
             mock_manager_class.return_value = mock_manager
             
             result = expand_prompt_variables(
-                "Test {issue_title}",
+                "Test {title}",
                 sample_issue
             )
             

@@ -438,9 +438,9 @@ def generate_commit_message(
     
     try:
         return template.format(
-            issue_id=issue.id,
-            issue_title=issue.title,
-            issue_type=issue.issue_type.value if issue.issue_type else "task"
+            id=issue.id,
+            title=issue.title,
+            type=issue.issue_type.value if issue.issue_type else "task"
         )
     except (KeyError, AttributeError):
         # Fallback to simple message
