@@ -152,7 +152,6 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-.auto/state/
 *.worktree
-.auto/cache/
+auto.egg-info/
 .auto/
