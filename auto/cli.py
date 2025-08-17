@@ -738,12 +738,14 @@ def process(
     verbose: bool
 ) -> None:
     """Process issue: fetch details, create worktree, run AI implementation, and create PR."""
+    # Import workflow components
+    from auto.workflows import (
+        process_issue_workflow, 
+        validate_process_prerequisites, 
+        ProcessWorkflowError
+    )
+    
     try:
-        from auto.workflows import (
-            process_issue_workflow, 
-            validate_process_prerequisites, 
-            ProcessWorkflowError
-        )
         
         # Parse issue identifier
         identifier = IssueIdentifier.parse(issue_id)
