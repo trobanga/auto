@@ -227,6 +227,51 @@ auto config set github.token <token>
 auto config set ai.implementation_agent coder
 ```
 
+## Shell Completions
+
+### Zsh Plugin for Tab Completions
+A zsh plugin is needed to provide intelligent tab completions for the auto CLI tool.
+
+**Required Features:**
+- Command completion for all subcommands (init, issues, ls, fetch, process, implement, review, update, merge, cleanup, status, config, show)
+- Issue ID completion from available GitHub/Linear issues
+- PR ID completion from open pull requests
+- Config key completion for `auto config get/set` commands
+- Option flag completion (--verbose, --state, --assignee, --label, etc.)
+- File path completion for prompt files (--prompt-file)
+- Template name completion for prompt templates (--prompt-template)
+- Agent name completion (--agent)
+
+**Plugin Structure:**
+```
+scripts/
+├── auto.plugin.zsh          # Main plugin file
+├── _auto                    # Zsh completion function
+└── completions/
+    ├── _auto_issues         # Issue ID completion helper
+    ├── _auto_prs           # PR ID completion helper
+    ├── _auto_config        # Config key completion helper
+    └── _auto_templates     # Template completion helper
+```
+
+**Installation for Users:**
+```bash
+# For oh-my-zsh users
+mkdir -p ~/.oh-my-zsh/custom/plugins/auto
+cp scripts/* ~/.oh-my-zsh/custom/plugins/auto/
+# Add 'auto' to plugins in ~/.zshrc
+
+# For manual installation
+cp scripts/_auto /usr/local/share/zsh/site-functions/
+# Reload zsh completions
+```
+
+**Dynamic Completion Features:**
+- Cache issue/PR lists for performance
+- Refresh cache on command execution
+- Context-aware completion based on current repository
+- Support for both GitHub and Linear issue formats
+
 ## Implementation Timeline
 1. **Phase 1**: Core structure, config system, basic CLI
 2. **Phase 2**: GitHub integration, worktree management
@@ -234,3 +279,4 @@ auto config set ai.implementation_agent coder
 4. **Phase 4**: Review cycle implementation (AI review → human review → updates)
 5. **Phase 5**: State management, error recovery, testing
 6. **Phase 6**: Linear integration, polish, documentation
+7. **Phase 7**: Zsh Plugin
