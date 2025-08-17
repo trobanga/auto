@@ -21,6 +21,11 @@ def isolated_config_manager(temp_home, monkeypatch):
     # Mock Path.home() to return our temp directory
     monkeypatch.setattr(Path, "home", lambda: temp_home)
     
+    # Mock git root to prevent finding real project config
+    def mock_get_git_root():
+        return None  # No git root found
+    monkeypatch.setattr("auto.config.get_git_root", mock_get_git_root)
+    
     # Create a fresh ConfigManager instance
     manager = ConfigManager()
     manager._user_config_path = temp_home / ".auto" / "config.yaml"

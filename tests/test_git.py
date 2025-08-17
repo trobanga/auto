@@ -195,9 +195,9 @@ class TestWorktreeCreation:
         
         # Mock successful command executions
         mock_run_command.side_effect = [
-            ShellResult(0, "", "", "git fetch"),  # fetch
-            ShellResult(0, "main", "", "git branch --list main"),  # base branch check
             ShellResult(0, "", "", "git branch --list auto/feature/123"),  # branch conflict check
+            ShellResult(0, "", "", "git fetch"),  # fetch (in _prepare_base_branch)
+            ShellResult(0, "  main", "", "git branch --list main"),  # base branch exists locally
             ShellResult(0, "", "", "git worktree add"),  # worktree creation
         ]
         
@@ -217,11 +217,9 @@ class TestWorktreeCreation:
         """Test worktree creation with branch conflict."""
         mock_get_git_root.return_value = Path("/repo")
         
-        # Mock branch already exists
+        # Mock branch already exists - correct sequence
         mock_run_command.side_effect = [
-            ShellResult(0, "", "", "git fetch"),  # fetch
-            ShellResult(0, "main", "", "git branch --list main"),  # base branch check
-            ShellResult(0, "auto/feature/123", "", "git branch --list auto/feature/123"),  # branch exists
+            ShellResult(0, "auto/feature/123", "", "git branch --list auto/feature/123"),  # branch exists (conflict)
         ]
         
         with patch.object(Path, 'exists', return_value=False):
@@ -279,6 +277,7 @@ class TestWorktreeCreation:
         mock_get_git_root.return_value = Path("/repo")
         
         mock_run_command.side_effect = [
+            ShellResult(0, "", "", "git branch --list auto/feature/123"),  # branch conflict check (no conflict)
             ShellResult(0, "", "", "git fetch"),  # fetch
             ShellResult(0, "", "", "git branch --list main"),  # base branch doesn't exist locally
             ShellResult(0, "", "", "git ls-remote --heads origin main"),  # base branch doesn't exist on remote
@@ -327,7 +326,7 @@ class TestWorktreeCleanup:
             ShellResult(0, "", "", "git branch -D auto/feature/123"),  # branch deletion
         ]
         
-        with patch.object(sample_worktree_info, 'exists', return_value=True):
+        with patch.object(Path, 'exists', return_value=True):
             manager = GitWorktreeManager(mock_config)
             manager.cleanup_worktree(sample_worktree_info)
             
@@ -348,7 +347,7 @@ class TestWorktreeCleanup:
             ShellResult(0, "", "", "git branch -D auto/feature/123"),  # branch deletion
         ]
         
-        with patch.object(sample_worktree_info, 'exists', return_value=True):
+        with patch.object(Path, 'exists', return_value=True):
             manager = GitWorktreeManager(mock_config)
             manager.cleanup_worktree(sample_worktree_info)
     
@@ -367,8 +366,7 @@ class TestWorktreeCleanup:
             ShellResult(0, "", "", "git branch -D auto/feature/123"),  # branch deletion
         ]
         
-        with patch.object(sample_worktree_info, 'exists', return_value=True), \
-             patch.object(sample_worktree_info.path_obj, 'exists', return_value=True):
+        with patch.object(Path, 'exists', return_value=True):
             
             manager = GitWorktreeManager(mock_config)
             manager.cleanup_worktree(sample_worktree_info)
@@ -390,8 +388,7 @@ class TestWorktreeCleanup:
             ShellResult(1, "", "failed", "git branch -D auto/feature/123"),  # branch deletion fails
         ]
         
-        with patch.object(sample_worktree_info, 'exists', return_value=True), \
-             patch.object(sample_worktree_info.path_obj, 'exists', return_value=False):
+        with patch.object(Path, 'exists', return_value=True):
             
             manager = GitWorktreeManager(mock_config)
             

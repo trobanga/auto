@@ -144,7 +144,7 @@ class TestConfigManager:
     def test_get_set_config_value(self, isolated_config_manager):
         """Test getting and setting configuration values."""
         # Create initial config
-        isolated_config_manager.create_default_config(user_level=True)
+        config_path = isolated_config_manager.create_default_config(user_level=True)
         
         # Reload config to ensure fresh state
         isolated_config_manager.reload_config()
@@ -162,6 +162,7 @@ class TestConfigManager:
         
         # Test nested value
         isolated_config_manager.set_config_value("github.default_org", "test-org", user_level=True)
+        isolated_config_manager._config = None  # Clear cached config
         org = isolated_config_manager.get_config_value("github.default_org")
         assert org == "test-org"
     
