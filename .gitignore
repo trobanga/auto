@@ -154,4 +154,5 @@ Thumbs.db
 # Project specific
 .auto/state/
 *.worktree
-.auto/cache/.auto/
+.auto/cache/
+.auto/
