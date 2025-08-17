@@ -246,27 +246,19 @@ Do not include the full file list or command list - just highlight the most impo
 Include appropriate sections like ## Summary, ## Changes, etc."""
 
             self.logger.info(f"Generating PR description for issue {issue.id}")
-            
-            # Use simple claude -p call for clean PR description generation
-            import subprocess
-            
-            # Execute simple claude command with direct prompt
-            result = subprocess.run(
-                ["claude", "-p", prompt],
-                capture_output=True,
-                text=True,
-                cwd=worktree_path,
-                timeout=300  # 5 minute timeout
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent="git-commit-expert"  # Use commit expert for documentation
             )
             
-            if result.returncode != 0:
+            if not result.success:
                 raise AIIntegrationError(
-                    f"Claude PR description generation failed: {result.stderr}",
-                    exit_code=result.returncode
+                    f"PR description generation failed: {result.error}",
+                    exit_code=result.exit_code
                 )
             
             # Return the generated description
-            description = result.stdout.strip()
+            description = result.output.strip()
             
             self.logger.info(f"PR description generated for issue {issue.id}")
             return description
