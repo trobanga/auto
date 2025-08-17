@@ -63,21 +63,22 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
 
 
 @cli.command()
-@click.option(
-    "--project", "-p", is_flag=True,
-    help="Initialize project config instead of user config"
-)
-def init(project: bool) -> None:
-    """Initialize auto configuration."""
+def init() -> None:
+    """Initialize auto configuration for the current project."""
     try:
-        config_path = config_manager.create_default_config(user_level=not project)
+        # Ensure user config exists
+        user_config_path = Path.home() / ".auto" / "config.yaml"
+        if not user_config_path.exists():
+            config_manager.create_default_config(user_level=True)
+            console.print(f"[green]✓[/green] User configuration created: {user_config_path}")
         
-        config_type = "project" if project else "user"
-        console.print(f"[green]✓[/green] {config_type.title()} configuration initialized: {config_path}")
+        # Create project config
+        project_config_path = config_manager.create_default_config(user_level=False)
+        console.print(f"[green]✓[/green] Project configuration initialized: {project_config_path}")
         
         # Show next steps
         console.print("\n[bold]Next steps:[/bold]")
-        console.print("1. Edit the configuration file to customize settings")
+        console.print("1. Edit the project configuration file to customize settings")
         console.print("2. Set up GitHub CLI: [cyan]gh auth login[/cyan]")
         console.print("3. Configure AI agent: [cyan]auto config set ai.command claude[/cyan]")
         console.print("4. Run [cyan]auto --help[/cyan] to see available commands")

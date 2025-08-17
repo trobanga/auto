@@ -22,29 +22,41 @@ class TestCLI:
         assert "Automatic User Task Orchestrator" in result.output
         assert "Commands:" in result.output
     
-    def test_init_command(self, runner, temp_home, isolated_config_manager):
-        """Test init command."""
+    def test_init_command(self, runner, temp_home, mock_git_root, monkeypatch, isolated_config_manager):
+        """Test init command creates project config by default."""
+        # Mock current directory to be in a git repository
+        monkeypatch.chdir(mock_git_root)
+        
         result = runner.invoke(cli, ["init"])
-        assert result.exit_code == 0
-        assert "configuration initialized" in result.output
-        
-        # Verify config file was created
-        config_path = temp_home / ".auto" / "config.yaml"
-        assert config_path.exists()
-    
-    def test_init_project_flag(self, runner, temp_home, mock_git_root, monkeypatch):
-        """Test init command with --project flag."""
-        # Mock current directory
-        cwd = mock_git_root
-        monkeypatch.chdir(cwd)
-        
-        result = runner.invoke(cli, ["init", "--project"])
         assert result.exit_code == 0
         assert "Project configuration initialized" in result.output
         
-        # Verify project config file was created
-        config_path = cwd / ".auto" / "config.yaml"
-        assert config_path.exists()
+        # Verify both user and project config files were created
+        user_config_path = temp_home / ".auto" / "config.yaml"
+        project_config_path = mock_git_root / ".auto" / "config.yaml"
+        
+        assert user_config_path.exists()
+        assert project_config_path.exists()
+    
+    def test_init_command_user_config_exists(self, runner, temp_home, mock_git_root, monkeypatch, isolated_config_manager):
+        """Test init command when user config already exists."""
+        # Create user config first
+        user_config_path = temp_home / ".auto" / "config.yaml"
+        user_config_path.parent.mkdir(parents=True, exist_ok=True)
+        user_config_path.write_text("version: 1.0\n")
+        
+        # Mock current directory to be in a git repository
+        monkeypatch.chdir(mock_git_root)
+        
+        result = runner.invoke(cli, ["init"])
+        assert result.exit_code == 0
+        assert "Project configuration initialized" in result.output
+        # Should not mention creating user config since it already exists
+        assert "User configuration created" not in result.output
+        
+        # Verify project config was created
+        project_config_path = mock_git_root / ".auto" / "config.yaml"
+        assert project_config_path.exists()
     
     def test_config_get_set(self, runner, temp_home):
         """Test config get and set commands."""
