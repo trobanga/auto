@@ -199,6 +199,32 @@ class WorktreeInfo(BaseModel):
         return self.path_obj.exists()
 
 
+class ReviewComment(BaseModel):
+    """Individual review comment model."""
+    
+    id: int = Field(description="Comment ID")
+    body: str = Field(description="Comment body text")
+    path: Optional[str] = Field(default=None, description="File path for line comments")
+    line: Optional[int] = Field(default=None, description="Line number for line comments")
+    start_line: Optional[int] = Field(default=None, description="Start line for multi-line comments")
+    side: str = Field(default="RIGHT", description="Side of diff (LEFT/RIGHT)")
+    author: Optional[str] = Field(default=None, description="Comment author")
+    created_at: Optional[datetime] = Field(default=None, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+    resolved: bool = Field(default=False, description="Whether comment is resolved")
+
+
+class GitHubPRReview(BaseModel):
+    """GitHub PR review model."""
+    
+    id: int = Field(description="Review ID")
+    state: str = Field(description="Review state (COMMENTED, APPROVED, CHANGES_REQUESTED)")
+    body: str = Field(description="Review body text")
+    author: Optional[str] = Field(default=None, description="Review author")
+    submitted_at: Optional[datetime] = Field(default=None, description="Submission timestamp")
+    comments: List[ReviewComment] = Field(default_factory=list, description="Review comments")
+
+
 class Review(BaseModel):
     """Review model for tracking review cycles."""
     
@@ -208,6 +234,7 @@ class Review(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now, description="Review timestamp")
     comments: List[str] = Field(default_factory=list, description="Review comments")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    github_review: Optional[GitHubPRReview] = Field(default=None, description="Associated GitHub review")
 
 
 class AIFileChange(BaseModel):
@@ -378,6 +405,25 @@ class WorkflowsConfig(BaseModel):
         default="feat: implement {id} - {title}",
         description="Commit message template for implementations"
     )
+    
+    @field_validator("review_check_interval")
+    @classmethod
+    def validate_review_check_interval(cls, v: int) -> int:
+        """Validate review check interval is reasonable."""
+        if v < 10:
+            raise ValueError("Review check interval must be at least 10 seconds")
+        if v > 3600:
+            raise ValueError("Review check interval must be at most 1 hour (3600 seconds)")
+        return v
+    
+    @field_validator("worktree_conflict_resolution")
+    @classmethod
+    def validate_conflict_resolution(cls, v: str) -> str:
+        """Validate conflict resolution strategy."""
+        valid_strategies = {"prompt", "force", "skip"}
+        if v not in valid_strategies:
+            raise ValueError(f"Invalid conflict resolution strategy: {v}. Must be one of {valid_strategies}")
+        return v
 
 
 class Config(BaseModel):
