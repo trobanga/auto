@@ -2,6 +2,7 @@
 
 import pytest
 import anyio
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch, mock_open
 
@@ -322,8 +323,8 @@ class TestApplyAIChanges:
             mock_subprocess.assert_any_call(
                 "echo 'test'",
                 cwd=worktree_path,
-                stdout=anyio.subprocess.PIPE,
-                stderr=anyio.subprocess.PIPE
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE
             )
 
     @pytest.mark.anyio

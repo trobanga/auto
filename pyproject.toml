@@ -34,6 +34,8 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-trio>=0.8.0",
+    "trio>=0.22.0",
     "pytest-cov>=4.0.0",
     "black>=23.0.0",
     "isort>=5.12.0",
@@ -72,7 +74,8 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-anyio_backends = ["asyncio"]
+asyncio_mode = "auto"
+anyio_backends = ["asyncio", "trio"]
 markers = [
     "asyncio: mark test as async test",
     "anyio: mark test as async test using anyio",

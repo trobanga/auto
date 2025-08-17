@@ -183,9 +183,10 @@ class TestCreatePullRequestWorkflow:
 class TestGeneratePRMetadata:
     """Test generate_pr_metadata function."""
 
-    def test_generate_pr_metadata(self, sample_issue, workflow_state, mock_config):
+    @pytest.mark.asyncio
+    async def test_generate_pr_metadata(self, sample_issue, workflow_state, mock_config):
         """Test PR metadata generation."""
-        metadata = generate_pr_metadata(sample_issue, workflow_state, mock_config)
+        metadata = await generate_pr_metadata(sample_issue, workflow_state, mock_config)
         
         assert metadata.title == "feat: Add dark mode support"
         assert "Closes #123" in metadata.description
@@ -196,9 +197,10 @@ class TestGeneratePRMetadata:
         assert "developer" in metadata.assignees
         assert "reviewer1" in metadata.reviewers
 
-    def test_generate_pr_metadata_draft(self, sample_issue, workflow_state, mock_config):
+    @pytest.mark.asyncio
+    async def test_generate_pr_metadata_draft(self, sample_issue, workflow_state, mock_config):
         """Test PR metadata generation for draft."""
-        metadata = generate_pr_metadata(sample_issue, workflow_state, mock_config, draft=True)
+        metadata = await generate_pr_metadata(sample_issue, workflow_state, mock_config, draft=True)
         
         assert metadata.draft is True
 
@@ -254,11 +256,12 @@ class TestGeneratePRTitle:
 class TestGeneratePRDescription:
     """Test generate_pr_description function."""
 
-    def test_generate_description_with_template(self, sample_issue, workflow_state, mock_config):
+    @pytest.mark.asyncio
+    async def test_generate_description_with_template(self, sample_issue, workflow_state, mock_config):
         """Test PR description generation with template."""
         with patch('auto.workflows.pr_create.load_pr_template', return_value="## Template\nTemplate content"):
             
-            description = generate_pr_description(sample_issue, workflow_state, mock_config)
+            description = await generate_pr_description(sample_issue, workflow_state, mock_config)
             
             assert "## Template" in description
             assert "Template content" in description
@@ -268,11 +271,12 @@ class TestGeneratePRDescription:
             assert "Modified: `src/App.tsx`" in description
             assert "`npm test`" in description
 
-    def test_generate_description_without_template(self, sample_issue, workflow_state, mock_config):
+    @pytest.mark.asyncio
+    async def test_generate_description_without_template(self, sample_issue, workflow_state, mock_config):
         """Test PR description generation without template."""
         with patch('auto.workflows.pr_create.load_pr_template', return_value=None):
             
-            description = generate_pr_description(sample_issue, workflow_state, mock_config)
+            description = await generate_pr_description(sample_issue, workflow_state, mock_config)
             
             assert "## Related Issue" in description
             assert "Closes #123" in description
@@ -280,7 +284,8 @@ class TestGeneratePRDescription:
             assert "## Testing" in description
             assert "## Review Checklist" in description
 
-    def test_generate_description_no_ai_response(self, sample_issue, mock_config):
+    @pytest.mark.asyncio
+    async def test_generate_description_no_ai_response(self, sample_issue, mock_config):
         """Test PR description generation without AI response."""
         workflow_state = WorkflowState(
             issue_id="#123",
@@ -290,7 +295,7 @@ class TestGeneratePRDescription:
         
         with patch('auto.workflows.pr_create.load_pr_template', return_value=None):
             
-            description = generate_pr_description(sample_issue, workflow_state, mock_config)
+            description = await generate_pr_description(sample_issue, workflow_state, mock_config)
             
             assert "Closes #123" in description
             assert "## Testing" in description

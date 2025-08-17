@@ -398,7 +398,10 @@ def get_implementation_summary(workflow_state: WorkflowState) -> str:
     
     if workflow_state.ai_status == AIStatus.FAILED:
         if workflow_state.ai_response:
-            return f"AI implementation failed: {workflow_state.ai_response.content[:100]}..."
+            content = workflow_state.ai_response.content
+            if len(content) > 50:
+                return f"AI implementation failed: {content[:50]}..."
+            return f"AI implementation failed: {content}"
         return "AI implementation failed"
     
     if workflow_state.ai_status == AIStatus.IMPLEMENTED:

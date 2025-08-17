@@ -188,14 +188,13 @@ def generate_pr_title(issue: Issue, config: Config) -> str:
     # Use issue title directly, optionally with prefix
     title = issue.title
     
-    # Add issue type prefix if available
+    # Add issue type prefix if available and recognized
     if issue.issue_type:
         type_prefix = {
             "feature": "feat:",
             "bug": "fix:",
             "enhancement": "enhance:",
-            "hotfix": "hotfix:",
-            "task": "task:"
+            "hotfix": "hotfix:"
         }.get(issue.issue_type.value.lower(), "")
         
         if type_prefix:

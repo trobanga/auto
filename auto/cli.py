@@ -14,9 +14,24 @@ from auto.core import get_core
 from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command
+from auto.workflows.fetch import (
+    fetch_issue_workflow, validate_issue_access, get_issue_from_state
+)
+from auto.workflows.process import (
+    process_issue_workflow, cleanup_process_workflow, validate_process_prerequisites
+)
+from auto.workflows.implement import (
+    implement_issue_workflow, validate_implementation_prerequisites
+)
 
 logger = get_logger(__name__)
 console = Console()
+
+
+def fetch_issue_workflow_sync(issue_id: str):
+    """Synchronous wrapper for fetch_issue_workflow."""
+    import asyncio
+    return asyncio.run(fetch_issue_workflow(issue_id))
 
 
 def enable_verbose_logging() -> None:

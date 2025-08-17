@@ -35,6 +35,11 @@ class GitHubIssueError(GitHubIntegrationError):
     pass
 
 
+class GitHubError(GitHubIntegrationError):
+    """General GitHub error for backward compatibility."""
+    pass
+
+
 class GitHubIntegration:
     """GitHub integration using gh CLI."""
     

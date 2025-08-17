@@ -479,6 +479,11 @@ class ReviewCommentProcessor:
         """Categorize comment based on content analysis."""
         comment_lower = comment_text.lower()
         
+        # Check for bugs first - they override other categories when functionality is broken
+        for pattern in self._bug_patterns:
+            if re.search(pattern, comment_lower, re.IGNORECASE):
+                return CommentCategory.BUG
+        
         # Check patterns in order of specificity (most specific first)
         for pattern in self._security_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
@@ -495,10 +500,6 @@ class ReviewCommentProcessor:
         for pattern in self._documentation_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.DOCUMENTATION
-        
-        for pattern in self._bug_patterns:
-            if re.search(pattern, comment_lower, re.IGNORECASE):
-                return CommentCategory.BUG
         
         # Additional category detection
         if re.search(r'\b(test|spec|coverage|mock)\b', comment_lower):
@@ -567,6 +568,16 @@ class ReviewCommentProcessor:
     def _is_actionable(self, comment_text: str, category: CommentCategory) -> bool:
         """Determine if comment requires action."""
         comment_lower = comment_text.lower()
+        
+        # Positive/praise comments are not actionable
+        positive_indicators = [
+            'great', 'good', 'nice', 'excellent', 'perfect', 'love', 'awesome',
+            'well done', 'looks good', 'clean', 'elegant', 'solid', 'impressive'
+        ]
+        if any(word in comment_lower for word in positive_indicators):
+            # Unless they also contain actionable language
+            if not any(word in comment_lower for word in ['but', 'however', 'should', 'could', 'might', 'consider']):
+                return False
         
         # Questions might not be actionable
         if category == CommentCategory.QUESTION and not any(
