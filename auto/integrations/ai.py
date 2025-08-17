@@ -198,7 +198,18 @@ class ClaudeIntegration:
             # Claude Code style: agent invocation in prompt, use -p flag
             if agent:
                 prompt = f"agent-{agent}, {prompt}"
-            return [self.command, "-p", prompt]
+            
+            cmd = [self.command]
+            
+            # Add streaming output if enabled
+            if self.config.enable_streaming and self.config.output_format:
+                cmd.extend(["--output-format", self.config.output_format])
+                # Claude CLI requires --verbose with stream-json when using -p
+                if self.config.output_format == "stream-json":
+                    cmd.append("--verbose")
+            
+            cmd.extend(["-p", prompt])
+            return cmd
         
         elif command_format == "openai":
             # OpenAI CLI style (hypothetical example)
@@ -273,7 +284,7 @@ class ClaudeIntegration:
         working_directory: Optional[str] = None
     ) -> AICommandResult:
         """
-        Execute Claude CLI command with specified agent and prompt.
+        Execute Claude CLI command with activity monitoring and stale detection.
         
         Args:
             prompt: Formatted prompt for AI
@@ -290,7 +301,8 @@ class ClaudeIntegration:
             # Build command using flexible command builder
             cmd = self._build_ai_command(prompt, agent)
             
-            self.logger.debug(f"Executing AI command: {' '.join(cmd[:3])}... (prompt truncated)")
+            self.logger.info(f"Executing AI command: {' '.join(cmd[:3])}... (prompt truncated)")
+            self.logger.debug(f"Full command: {' '.join(cmd)}")
             
             # Execute command
             process = await asyncio.create_subprocess_exec(
@@ -301,42 +313,25 @@ class ClaudeIntegration:
                 limit=1024 * 1024  # 1MB limit for output
             )
             
-            # Wait for completion with timeout
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
-                    timeout=self.config.timeout
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+            # Activity monitoring with stale detection
+            if self.config.enable_activity_monitoring:
+                return await self._monitor_ai_command_with_activity(process, start_time, agent)
+            else:
+                # Fallback to simple communicate() for backward compatibility
+                stdout, stderr = await process.communicate()
                 duration = time.time() - start_time
+                
+                output = stdout.decode('utf-8', errors='replace')
+                error = stderr.decode('utf-8', errors='replace')
+                success = process.returncode == 0
+                
                 return AICommandResult(
-                    success=False,
-                    output="",
-                    error=f"AI command timed out after {self.config.timeout} seconds",
-                    exit_code=-1,
+                    success=success,
+                    output=output,
+                    error=error,
+                    exit_code=process.returncode or 0,
                     duration=duration
                 )
-            
-            duration = time.time() - start_time
-            
-            output = stdout.decode('utf-8', errors='replace')
-            error = stderr.decode('utf-8', errors='replace')
-            
-            success = process.returncode == 0
-            
-            if not success:
-                self.logger.warning(f"AI command failed with exit code {process.returncode}")
-                self.logger.debug(f"Error output: {error}")
-            
-            return AICommandResult(
-                success=success,
-                output=output,
-                error=error,
-                exit_code=process.returncode or 0,
-                duration=duration
-            )
             
         except Exception as e:
             duration = time.time() - start_time
@@ -348,6 +343,333 @@ class ClaudeIntegration:
                 exit_code=-1,
                 duration=duration
             )
+
+    async def _monitor_ai_command_with_activity(
+        self,
+        process: asyncio.subprocess.Process,
+        start_time: float,
+        agent: str
+    ) -> AICommandResult:
+        """
+        Monitor AI command execution with activity tracking and stale detection.
+        
+        Args:
+            process: The subprocess to monitor
+            start_time: Command start time
+            agent: Agent name for display
+            
+        Returns:
+            AICommandResult with execution details
+        """
+        import time
+        from rich.console import Console
+        from rich.live import Live
+        from rich.text import Text
+        from rich.spinner import Spinner
+        from rich.layout import Layout
+        from rich.panel import Panel
+        
+        console = Console()
+        
+        # Activity tracking
+        last_activity = None  # Will be set when first output is received
+        output_lines = []
+        error_lines = []
+        total_output = ""
+        total_error = ""
+        output_bytes = 0
+        error_bytes = 0
+        
+        # Interactive controls - can be toggled by setting environment variable
+        import os
+        show_output_toggle = self.config.show_ai_output or os.getenv('AUTO_SHOW_AI_OUTPUT', '').lower() in ('1', 'true', 'yes')
+        
+        # JSON streaming support
+        streaming_enabled = self.config.enable_streaming and self.config.output_format == "stream-json"
+        
+        def parse_streaming_json(line: str) -> Optional[str]:
+            """Parse a line of streaming JSON and extract content."""
+            try:
+                import json
+                data = json.loads(line.strip())
+                
+                # Extract content based on common streaming JSON formats
+                if isinstance(data, dict):
+                    # Try different common field names for content
+                    for field in ['content', 'text', 'message', 'data', 'output']:
+                        if field in data and data[field]:
+                            return str(data[field])
+                    
+                    # For tool use or other structured data, show the type
+                    if 'type' in data:
+                        type_name = data['type']
+                        if type_name == 'tool_use' and 'name' in data:
+                            return f"[Using tool: {data['name']}]"
+                        elif type_name == 'message' and 'content' in data:
+                            return str(data['content'])
+                        else:
+                            return f"[{type_name}]"
+                
+                # Fallback: convert entire object to string
+                return str(data)
+                
+            except (json.JSONDecodeError, KeyError, TypeError):
+                # Not valid JSON or unexpected format - return as-is
+                return line.strip() if line.strip() else None
+        
+        # Progress display setup
+        spinner = Spinner("dots", style="cyan")
+        
+        def create_status_display():
+            """Create the status display panel."""
+            elapsed = time.time() - start_time
+            elapsed_str = f"{elapsed:.1f}s"
+            
+            # Calculate time since last activity
+            if last_activity is None:
+                activity_str = "Waiting for first output..."
+                activity_style = "dim yellow"
+                time_since_activity = 0  # Initialize for use in stale check
+            else:
+                time_since_activity = time.time() - last_activity
+                activity_str = f"{time_since_activity:.1f}s ago" if time_since_activity > 0 else "now"
+                activity_style = "bright_green"
+            
+            # Determine status state
+            if last_activity is None:
+                status_state = "🔄 Starting"
+                status_style = "yellow"
+            elif self.config.stale_timeout > 0 and time_since_activity > (self.config.stale_timeout * 0.8):
+                status_state = "⚠️  Stale Warning"
+                status_style = "red"
+            else:
+                status_state = "✅ Active"
+                status_style = "green"
+            
+            # Status text
+            status_text = Text()
+            status_text.append(f"🤖 AI Agent: ", style="bold cyan")
+            status_text.append(f"{agent}\n", style="bright_blue")
+            status_text.append(f"⏱️  Elapsed: ", style="bold yellow")
+            status_text.append(f"{elapsed_str}\n", style="bright_yellow")
+            status_text.append(f"📡 Last Activity: ", style="bold green")
+            status_text.append(f"{activity_str}\n", style=activity_style)
+            status_text.append(f"📊 Status: ", style="bold magenta")
+            status_text.append(f"{status_state}\n", style=status_style)
+            
+            # Output statistics
+            if output_bytes > 0 or error_bytes > 0:
+                status_text.append(f"📈 Output: ", style="bold blue")
+                status_text.append(f"{len(output_lines)} lines, {output_bytes} bytes", style="bright_blue")
+                if error_bytes > 0:
+                    status_text.append(f" | {len(error_lines)} errors, {error_bytes} bytes", style="bright_red")
+                status_text.append("\n")
+            
+            # Show command being executed
+            status_text.append(f"🔧 Command: ", style="bold white")
+            cmd_parts = ["claude"]
+            if streaming_enabled:
+                cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
+            cmd_parts.extend(["-p", f"\"agent-{agent}, ...\""])
+            cmd_preview = " ".join(cmd_parts)
+            status_text.append(f"{cmd_preview}\n", style="dim cyan")
+            
+            # Show process PID if available
+            if hasattr(process, 'pid') and process.pid:
+                status_text.append(f"🆔 PID: ", style="bold white")
+                status_text.append(f"{process.pid}\n", style="dim white")
+            
+            # Show keyboard shortcuts
+            status_text.append(f"⌨️  Controls: ", style="bold white")
+            status_text.append(f"Ctrl+C = quit", style="dim cyan")
+            if not show_output_toggle:
+                status_text.append(f" | set AUTO_SHOW_AI_OUTPUT=1 to see raw output", style="dim yellow")
+            status_text.append("\n")
+            
+            if show_output_toggle and output_lines:
+                # Show recent output lines
+                recent_lines = output_lines[-3:] if len(output_lines) > 3 else output_lines
+                if recent_lines:
+                    status_text.append(f"\n📝 Recent Output:\n", style="bold blue")
+                    for line in recent_lines:
+                        if line.strip():
+                            truncated = line[:80] + "..." if len(line) > 80 else line
+                            status_text.append(f"   {truncated}\n", style="bright_black")
+            
+            # Stale warning
+            if self.config.stale_timeout > 0 and last_activity is not None and time_since_activity > (self.config.stale_timeout * 0.8):
+                remaining = self.config.stale_timeout - time_since_activity
+                status_text.append(f"\n⚠️  Stale warning: {remaining:.1f}s remaining", style="bold red")
+            
+            return Panel(status_text, title="AI Command Monitor", border_style="cyan")
+        
+        # Simpler keyboard handling using signal or file-based approach
+        import signal
+        import os
+        keyboard_quit_requested = False
+        
+        def signal_handler(signum, frame):
+            """Handle Ctrl+C to quit."""
+            nonlocal keyboard_quit_requested
+            keyboard_quit_requested = True
+            self.logger.info("User requested quit (Ctrl+C)")
+            try:
+                process.terminate()
+            except:
+                pass
+        
+        # Set up signal handler for Ctrl+C
+        original_handler = signal.signal(signal.SIGINT, signal_handler)
+        
+        # Start monitoring with Rich Live display
+        try:
+            with Live(create_status_display(), console=console, refresh_per_second=2) as live:
+                while True:
+                    # Check if process completed or quit requested
+                    if process.returncode is not None or keyboard_quit_requested:
+                        break
+                    
+                    # Try to read output
+                    try:
+                        # Read stdout with small timeout
+                        if process.stdout:
+                            try:
+                                line = await asyncio.wait_for(
+                                    process.stdout.readline(),
+                                    timeout=0.1
+                                )
+                                if line:
+                                    decoded_line = line.decode('utf-8', errors='replace').rstrip()
+                                    content = None  # Initialize content variable
+                                    
+                                    # Process line based on streaming format
+                                    if streaming_enabled:
+                                        # Parse JSON streaming format
+                                        content = parse_streaming_json(decoded_line)
+                                        if content:
+                                            output_lines.append(content)
+                                            total_output += content + "\n"
+                                        # Always add raw line for debugging
+                                        total_output += f"[RAW] {decoded_line}\n"
+                                    else:
+                                        # Standard text output
+                                        output_lines.append(decoded_line)
+                                        total_output += decoded_line + "\n"
+                                        content = decoded_line
+                                    
+                                    output_bytes += len(line)
+                                    last_activity = time.time()
+                                    
+                                    if show_output_toggle:
+                                        # Show parsed content or raw line
+                                        display_line = content if content else decoded_line
+                                        self.logger.info(f"AI: {display_line}")
+                            except asyncio.TimeoutError:
+                                pass
+                        
+                        # Read stderr with small timeout
+                        if process.stderr:
+                            try:
+                                line = await asyncio.wait_for(
+                                    process.stderr.readline(),
+                                    timeout=0.1
+                                )
+                                if line:
+                                    decoded_line = line.decode('utf-8', errors='replace').rstrip()
+                                    error_lines.append(decoded_line)
+                                    total_error += decoded_line + "\n"
+                                    error_bytes += len(line)
+                                    last_activity = time.time()
+                                    
+                                    if self.config.show_ai_output:
+                                        self.logger.warning(f"AI Error: {decoded_line}")
+                            except asyncio.TimeoutError:
+                                pass
+                    
+                    except Exception as e:
+                        self.logger.debug(f"Error reading AI output: {e}")
+                    
+                    # Check for stale timeout
+                    if self.config.stale_timeout > 0 and last_activity is not None:
+                        time_since_activity = time.time() - last_activity
+                        if time_since_activity > self.config.stale_timeout:
+                            self.logger.warning(f"AI command stalled - no output for {self.config.stale_timeout} seconds")
+                            
+                            # Kill the process
+                            try:
+                                process.kill()
+                                await process.wait()
+                            except:
+                                pass
+                            
+                            duration = time.time() - start_time
+                            return AICommandResult(
+                                success=False,
+                                output=total_output,
+                                error=f"AI agent stalled - no output for {self.config.stale_timeout} seconds\n{total_error}",
+                                exit_code=-1,
+                                duration=duration
+                            )
+                    
+                    # Update display
+                    live.update(create_status_display())
+                    
+                    # Small sleep to prevent busy waiting
+                    await asyncio.sleep(0.1)
+                
+                # Process completed - get final return code
+                await process.wait()
+                
+                # Read any remaining output
+                if process.stdout:
+                    remaining_stdout = await process.stdout.read()
+                    if remaining_stdout:
+                        remaining_decoded = remaining_stdout.decode('utf-8', errors='replace')
+                        total_output += remaining_decoded
+                
+                if process.stderr:
+                    remaining_stderr = await process.stderr.read()
+                    if remaining_stderr:
+                        remaining_decoded = remaining_stderr.decode('utf-8', errors='replace')
+                        total_error += remaining_decoded
+        
+        except Exception as e:
+            self.logger.error(f"Error during AI command monitoring: {e}")
+            # Try to kill process and get whatever output we have
+            try:
+                process.kill()
+                await process.wait()
+            except:
+                pass
+            
+            duration = time.time() - start_time
+            return AICommandResult(
+                success=False,
+                output=total_output,
+                error=f"Monitoring error: {e}\n{total_error}",
+                exit_code=-1,
+                duration=duration
+            )
+        finally:
+            # Restore original signal handler
+            signal.signal(signal.SIGINT, original_handler)
+        
+        duration = time.time() - start_time
+        success = process.returncode == 0
+        
+        if not success:
+            self.logger.warning(f"AI command failed with exit code {process.returncode}")
+        
+        # Final status update
+        console.print(f"\n✅ AI command completed in {duration:.1f}s", style="bold green" if success else "bold red")
+        
+        return AICommandResult(
+            success=success,
+            output=total_output,
+            error=total_error,
+            exit_code=process.returncode or 0,
+            duration=duration
+        )
 
     def _format_implementation_prompt(
         self, 

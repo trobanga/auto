@@ -336,7 +336,11 @@ class AIConfig(BaseModel):
         default="Address the following review comments: {comments}",
         description="Update prompt template"
     )
-    timeout: int = Field(default=300, description="AI command timeout (seconds)")
+    stale_timeout: int = Field(default=300, description="AI command stale timeout - kill if no output for X seconds (0 = disabled)")
+    enable_activity_monitoring: bool = Field(default=True, description="Enable real-time activity monitoring and progress display")
+    enable_streaming: bool = Field(default=True, description="Enable real-time streaming output from AI commands")
+    output_format: str = Field(default="stream-json", description="AI output format: stream-json, text")
+    show_ai_output: bool = Field(default=False, description="Show full AI output in console (vs just activity indicators)")
     max_retries: int = Field(default=2, description="Maximum retries for failed commands")
     include_file_context: bool = Field(default=True, description="Include relevant file content in prompts")
     response_format: str = Field(default="structured", description="structured|freeform")

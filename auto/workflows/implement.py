@@ -126,7 +126,7 @@ async def implement_issue_workflow(
         return workflow_state
         
     except AIIntegrationError as e:
-        logger.error(f"AI integration error during implementation: {e}")
+        # Don't log here - error already logged at AI integration level
         workflow_state.update_ai_status(AIStatus.FAILED)
         workflow_state.update_status(WorkflowStatus.FAILED)
         raise ImplementationError(f"AI integration failed: {e}")

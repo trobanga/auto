@@ -12,6 +12,8 @@ from rich.logging import RichHandler
 class AutoLogger:
     """Custom logger with rich formatting."""
     
+    _handlers_setup = False  # Class variable to track if handlers are set up
+    
     def __init__(self, name: str = "auto", level: str = "INFO"):
         """Initialize logger with rich formatting.
         
@@ -22,11 +24,19 @@ class AutoLogger:
         self.logger = logging.getLogger(name)
         self.logger.setLevel(getattr(logging, level.upper()))
         
-        # Avoid duplicate handlers
-        if not self.logger.handlers:
-            self._setup_handlers()
+        # Only set up handlers on the root "auto" logger once
+        if not AutoLogger._handlers_setup:
+            root_logger = logging.getLogger("auto")
+            if not root_logger.handlers:
+                self._setup_handlers(root_logger)
+                AutoLogger._handlers_setup = True
+        
+        # For child loggers, prevent propagation duplication by not adding handlers
+        if name != "auto" and not self.logger.handlers:
+            # Child loggers will propagate to the root "auto" logger
+            self.logger.propagate = True
     
-    def _setup_handlers(self) -> None:
+    def _setup_handlers(self, logger: logging.Logger) -> None:
         """Setup console and file handlers."""
         console = Console()
         
@@ -51,8 +61,8 @@ class AutoLogger:
         )
         file_handler.setFormatter(file_formatter)
         
-        self.logger.addHandler(console_handler)
-        self.logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
+        logger.addHandler(file_handler)
     
     def debug(self, message: str, **kwargs) -> None:
         """Log debug message."""
