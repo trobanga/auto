@@ -300,8 +300,8 @@ Include appropriate sections like ## Summary, ## Changes, etc."""
                     exit_code=result.exit_code
                 )
             
-            # Return the generated description
-            description = result.output.strip()
+            # Extract the actual PR description from the streaming JSON output
+            description = self._extract_result_from_output(result.output)
             
             self.logger.info(f"PR description generated for issue {issue.id}")
             return description
@@ -1341,6 +1341,56 @@ Please implement the necessary changes to address all valid review feedback."""
         except Exception as e:
             self.logger.debug(f"Failed to get repository context: {e}")
             return ""
+
+    def _extract_result_from_output(self, output: str) -> str:
+        """
+        Extract the final result from Claude's JSON stream output.
+        
+        Claude with --output-format stream-json outputs multiple JSON objects,
+        with the final result in format: {type: "result", result: "actual content"}
+        
+        Args:
+            output: Raw output from Claude command
+            
+        Returns:
+            Extracted result content, or original output if no result found
+        """
+        try:
+            import json
+            
+            lines = output.split('\n')
+            last_result = None
+            
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                # Skip raw debug lines
+                if line.startswith('[RAW]'):
+                    continue
+                    
+                try:
+                    data = json.loads(line)
+                    if isinstance(data, dict) and data.get('type') == 'result':
+                        # Found a result object, store it (we want the last one)
+                        last_result = data.get('result', '')
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    # Not valid JSON or wrong format, skip
+                    continue
+            
+            if last_result is not None:
+                self.logger.debug(f"Extracted result from JSON stream: {len(last_result)} characters")
+                return last_result
+            else:
+                # No result object found, return original output (fallback for non-streaming)
+                self.logger.debug("No result object found in output, using full output")
+                return output.strip()
+                
+        except Exception as e:
+            self.logger.warning(f"Failed to extract result from output: {e}")
+            # Fallback to original output
+            return output.strip()
 
     async def _validate_prerequisites(self) -> None:
         """Validate AI prerequisites are met."""

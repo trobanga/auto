@@ -258,10 +258,10 @@ def process_issue_workflow(
                     # Don't log here - error already logged at lower levels
                     state.update_status(WorkflowStatus.FAILED)
                     state.metadata['ai_error'] = str(e)
-                core.save_workflow_state(state)
-                
-                # Always fail when AI implementation fails - don't continue to PR creation
-                raise ProcessWorkflowError(f"AI implementation failed: {e}")
+                    core.save_workflow_state(state)
+                    
+                    # Always fail when AI implementation fails - don't continue to PR creation
+                    raise ProcessWorkflowError(f"AI implementation failed: {e}")
         else:
             logger.info("AI implementation step skipped")
         
