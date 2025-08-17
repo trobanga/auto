@@ -64,7 +64,7 @@ async def create_pull_request_workflow(
                 raise PRCreationError("No implementation changes found to create PR")
         
         # Generate PR metadata
-        pr_metadata = generate_pr_metadata(issue, workflow_state, config, draft)
+        pr_metadata = await generate_pr_metadata(issue, workflow_state, config, draft)
         workflow_state.pr_metadata = pr_metadata
         
         # Commit implementation changes
@@ -105,7 +105,7 @@ async def create_pull_request_workflow(
         raise PRCreationError(f"PR creation failed: {e}")
 
 
-def generate_pr_metadata(
+async def generate_pr_metadata(
     issue: Issue,
     workflow_state: WorkflowState,
     config: Config,
@@ -127,7 +127,7 @@ def generate_pr_metadata(
     pr_title = generate_pr_title(issue, config)
     
     # Generate PR description
-    pr_description = generate_pr_description(issue, workflow_state, config)
+    pr_description = await generate_pr_description(issue, workflow_state, config)
     
     # Determine labels
     labels = determine_pr_labels(issue, workflow_state)
@@ -177,14 +177,14 @@ def generate_pr_title(issue: Issue, config: Config) -> str:
     return title
 
 
-def generate_pr_description(
+async def generate_pr_description(
     issue: Issue,
     workflow_state: WorkflowState,
     config: Config
 ) -> str:
     """
-    Generate PR description combining issue context, implementation summary,
-    and template formatting.
+    Generate PR description using Claude AI to create a professional,
+    concise description based on the implementation.
     
     Args:
         issue: Issue being implemented
@@ -194,65 +194,85 @@ def generate_pr_description(
     Returns:
         Generated PR description
     """
+    try:
+        # Use Claude to generate the PR description
+        from ..integrations.ai import ClaudeIntegration
+        
+        ai_integration = ClaudeIntegration(config.ai)
+        
+        file_changes = workflow_state.ai_response.file_changes if workflow_state.ai_response else []
+        commands = workflow_state.ai_response.commands if workflow_state.ai_response else []
+        
+        # Generate the main description using Claude
+        claude_description = await ai_integration.generate_pr_description(
+            issue=issue,
+            worktree_path=workflow_state.worktree,
+            file_changes=file_changes,
+            commands=commands
+        )
+        
+        # Add the issue reference
+        description_parts = [claude_description]
+        description_parts.append("")
+        description_parts.append(f"Closes {issue.id}")
+        
+        # Add testing checklist if test command is configured
+        if config.workflows.test_command:
+            description_parts.append("")
+            description_parts.append("## Testing")
+            description_parts.append(f"- [ ] Automated tests: `{config.workflows.test_command}`")
+        
+        return "\n".join(description_parts)
+        
+    except Exception as e:
+        logger.warning(f"Failed to generate Claude-based PR description: {e}")
+        # Fall back to simple description
+        return _generate_fallback_pr_description(issue, workflow_state, config)
+
+
+def _generate_fallback_pr_description(
+    issue: Issue,
+    workflow_state: WorkflowState,
+    config: Config
+) -> str:
+    """
+    Generate a simple fallback PR description when Claude generation fails.
+    
+    Args:
+        issue: Issue being implemented
+        workflow_state: Current workflow state
+        config: Configuration
+        
+    Returns:
+        Basic PR description
+    """
     description_parts = []
     
-    # Load and apply PR template if available
-    template_content = load_pr_template(config)
-    if template_content:
-        description_parts.append(template_content)
-    
-    # Add issue information
-    description_parts.append(f"## Related Issue")
-    description_parts.append(f"Closes {issue.id}")
+    # Basic summary
+    description_parts.append(f"## Summary")
+    description_parts.append(f"Implemented: {issue.title}")
     description_parts.append("")
     
-    # Add issue description if significant
+    # Add issue description if available
     if issue.description and len(issue.description.strip()) > 20:
-        description_parts.append(f"## Issue Description")
+        description_parts.append(f"## Description")
         description_parts.append(issue.description.strip())
         description_parts.append("")
     
-    # Add implementation summary
+    # Add basic implementation info
     if workflow_state.ai_response:
-        description_parts.append(f"## Implementation Summary")
+        description_parts.append(f"## Changes")
         
-        # Add AI implementation details
-        if workflow_state.ai_response.content:
-            description_parts.append(workflow_state.ai_response.content)
-            description_parts.append("")
-        
-        # Add file changes summary
         if workflow_state.ai_response.file_changes:
-            description_parts.append(f"### Files Changed")
-            for change in workflow_state.ai_response.file_changes:
-                action = change.get('action', 'modified')
-                path = change.get('path', 'unknown')
-                description_parts.append(f"- {action.title()}: `{path}`")
-            description_parts.append("")
-        
-        # Add commands run
+            description_parts.append(f"- Modified {len(workflow_state.ai_response.file_changes)} files")
+            
         if workflow_state.ai_response.commands:
-            description_parts.append(f"### Commands Executed")
-            for command in workflow_state.ai_response.commands:
-                description_parts.append(f"- `{command}`")
-            description_parts.append("")
+            description_parts.append(f"- Executed {len(workflow_state.ai_response.commands)} commands")
+        
+        description_parts.append("")
     
-    # Add testing information
-    description_parts.append(f"## Testing")
-    description_parts.append(f"- [ ] All tests pass")
-    description_parts.append(f"- [ ] Manual testing completed")
-    
-    if config.workflows.test_command:
-        description_parts.append(f"- [ ] Automated tests: `{config.workflows.test_command}`")
-    
-    description_parts.append("")
-    
-    # Add checklist
-    description_parts.append(f"## Review Checklist")
-    description_parts.append(f"- [ ] Code follows project conventions")
-    description_parts.append(f"- [ ] Tests are comprehensive")
-    description_parts.append(f"- [ ] Documentation is updated")
-    description_parts.append(f"- [ ] No breaking changes (or properly documented)")
+    # Add issue reference
+    description_parts.append(f"Closes {issue.id}")
     
     return "\n".join(description_parts)
 

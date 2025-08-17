@@ -181,6 +181,114 @@ class ClaudeIntegration:
             self.logger.error(f"AI update failed for issue {issue.id}: {e}")
             raise
 
+    async def generate_pr_description(
+        self,
+        issue: Issue,
+        worktree_path: str,
+        file_changes: List[Dict],
+        commands: List[str]
+    ) -> str:
+        """
+        Generate a pull request description by asking Claude to analyze the changes.
+        
+        Uses a separate Claude call to create a concise, meaningful PR description
+        based on the actual implementation rather than dumping the conversation.
+        
+        Args:
+            issue: The issue that was implemented
+            worktree_path: Path to the worktree with changes
+            file_changes: List of file changes from AI implementation
+            commands: List of commands executed during implementation
+            
+        Returns:
+            Generated PR description as markdown text
+            
+        Raises:
+            AIIntegrationError: If PR description generation fails
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            # Build context about the changes
+            changes_summary = ""
+            if file_changes:
+                changes_summary += "\nFiles Changed:\n"
+                for change in file_changes[:10]:  # Limit to first 10 files
+                    action = change.get('action', 'modified')
+                    path = change.get('path', 'unknown')
+                    changes_summary += f"- {action.title()}: {path}\n"
+                if len(file_changes) > 10:
+                    changes_summary += f"... and {len(file_changes) - 10} more files\n"
+            
+            commands_summary = ""
+            if commands:
+                commands_summary += "\nCommands Executed:\n"
+                for command in commands[:5]:  # Limit to first 5 commands
+                    commands_summary += f"- {command}\n"
+                if len(commands) > 5:
+                    commands_summary += f"... and {len(commands) - 5} more commands\n"
+            
+            # Create prompt for PR description generation
+            prompt = f"""Generate a professional pull request description for the following implementation:
+
+Issue Title: {issue.title}
+Issue Description: {issue.description}
+{changes_summary}
+{commands_summary}
+
+Please create a concise, well-structured PR description that includes:
+1. A brief summary of what was implemented
+2. Key changes and their purpose
+3. Any important notes for reviewers
+
+Format as proper markdown for GitHub. Keep it professional and informative but concise.
+Do not include the full file list or command list - just highlight the most important changes.
+Include appropriate sections like ## Summary, ## Changes, etc."""
+
+            self.logger.info(f"Generating PR description for issue {issue.id}")
+            
+            # Use simple claude -p call for clean PR description generation
+            import subprocess
+            
+            # Execute simple claude command with direct prompt
+            result = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True,
+                text=True,
+                cwd=worktree_path,
+                timeout=300  # 5 minute timeout
+            )
+            
+            if result.returncode != 0:
+                raise AIIntegrationError(
+                    f"Claude PR description generation failed: {result.stderr}",
+                    exit_code=result.returncode
+                )
+            
+            # Return the generated description
+            description = result.stdout.strip()
+            
+            self.logger.info(f"PR description generated for issue {issue.id}")
+            return description
+            
+        except Exception as e:
+            self.logger.error(f"PR description generation failed for issue {issue.id}: {e}")
+            # Fall back to a simple description rather than failing
+            fallback = f"""## Summary
+
+Implemented: {issue.title}
+
+## Description
+
+{issue.description}
+
+## Changes
+
+This PR implements the requested functionality with {len(file_changes)} file changes and {len(commands)} commands executed.
+"""
+            self.logger.warning(f"Using fallback PR description for issue {issue.id}")
+            return fallback
+
     def _build_ai_command(self, prompt: str, agent: Optional[str] = None) -> List[str]:
         """
         Build AI command based on configured format.
@@ -776,10 +884,19 @@ class ClaudeIntegration:
             if output.strip().startswith('{'):
                 try:
                     data = json.loads(output)
+                    
+                    # Use provided content or create summary
+                    content = data.get('content')
+                    if not content or len(content) > 1000:
+                        # Create summary if content is missing or too long
+                        file_changes = data.get('file_changes', [])
+                        commands = data.get('commands', [])
+                        content = self._create_response_summary(output, response_type, file_changes, commands)
+                    
                     return AIResponse(
                         success=True,
                         response_type=response_type,
-                        content=data.get('content', output),
+                        content=content,
                         file_changes=data.get('file_changes', []),
                         commands=data.get('commands', []),
                         metadata=data.get('metadata', {})
@@ -791,10 +908,13 @@ class ClaudeIntegration:
             file_changes = self._extract_file_changes(output)
             commands = self._extract_commands(output)
             
+            # Create a summary instead of storing the entire output
+            summary = self._create_response_summary(output, response_type, file_changes, commands)
+            
             return AIResponse(
                 success=True,
                 response_type=response_type,
-                content=output,
+                content=summary,
                 file_changes=file_changes,
                 commands=commands,
                 metadata={}
@@ -811,6 +931,54 @@ class ClaudeIntegration:
                 commands=[],
                 metadata={"parse_error": str(e)}
             )
+
+    def _create_response_summary(self, output: str, response_type: str, file_changes: List[Dict], commands: List[str]) -> str:
+        """
+        Create a concise summary of the AI response instead of storing the entire output.
+        
+        Args:
+            output: Full AI response output
+            response_type: Type of response (implementation, review, update)
+            file_changes: Extracted file changes
+            commands: Extracted commands
+            
+        Returns:
+            Concise summary string
+        """
+        # Create a summary based on what was accomplished
+        summary_parts = []
+        
+        if response_type == "implementation":
+            summary_parts.append("✅ AI implementation completed successfully")
+        elif response_type == "review":
+            summary_parts.append("✅ AI review completed")
+        elif response_type == "update":
+            summary_parts.append("✅ AI update completed")
+        else:
+            summary_parts.append(f"✅ AI {response_type} completed")
+        
+        # Add file changes summary
+        if file_changes:
+            summary_parts.append(f"📁 Modified {len(file_changes)} file(s)")
+            
+        # Add commands summary  
+        if commands:
+            summary_parts.append(f"⚡ Executed {len(commands)} command(s)")
+        
+        # Try to extract a brief summary from the beginning of the output
+        lines = output.split('\n')
+        brief_summary = ""
+        for line in lines[:10]:  # Look at first 10 lines
+            line = line.strip()
+            if line and not line.startswith('[') and not line.startswith('{') and len(line) > 20:
+                # Found a meaningful line
+                brief_summary = line[:200] + ("..." if len(line) > 200 else "")
+                break
+        
+        if brief_summary:
+            summary_parts.append(f"📝 {brief_summary}")
+        
+        return " | ".join(summary_parts)
 
     def _extract_file_changes(self, output: str) -> List[Dict[str, str]]:
         """Extract file changes from AI response text."""

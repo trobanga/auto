@@ -1,12 +1,14 @@
 """GitHub integration via gh CLI."""
 
 import json
+import os
 import re
+import subprocess
+import tempfile
 from datetime import datetime
-from pathlib import Path
 from typing import List, Optional
 
-from auto.models import GitHubRepository, Issue, IssueProvider, IssueStatus, IssueType
+from auto.models import GitHubRepository, Issue, IssueProvider, IssueStatus
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command, check_command_exists, ShellError
 
@@ -242,6 +244,174 @@ class GitHubIntegration:
                 raise GitHubIssueError(f"Failed to list issues: {e.stderr}")
         except json.JSONDecodeError as e:
             raise GitHubIssueError(f"Failed to parse issues data: {e}")
+    
+    async def create_pull_request(
+        self,
+        title: str,
+        description: str,
+        head_branch: str,
+        base_branch: str = "main",
+        draft: bool = False
+    ) -> "PullRequest":
+        """Create a pull request using gh CLI.
+        
+        Args:
+            title: PR title
+            description: PR description/body
+            head_branch: Source branch
+            base_branch: Target branch
+            draft: Create as draft PR
+            
+        Returns:
+            Created PullRequest object
+            
+        Raises:
+            GitHubIntegrationError: If PR creation fails
+        """
+        from auto.models import PullRequest, PRStatus
+        
+        try:
+            logger.info(f"Creating PR: {title}")
+            
+            # Write description to temporary file to avoid argument length limits
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.md') as temp_file:
+                temp_file.write(description)
+                temp_file_path = temp_file.name
+            
+            try:
+                # Build gh pr create command using temp file for body
+                cmd_args = [
+                    "gh", "pr", "create",
+                    "--title", title,
+                    "--body-file", temp_file_path,
+                    "--base", base_branch,
+                    "--head", head_branch
+                ]
+                
+                if draft:
+                    cmd_args.append("--draft")
+                
+                # Create the PR using subprocess with proper argument separation
+                result = subprocess.run(
+                    cmd_args,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    pass  # Ignore cleanup errors
+            
+            # Extract PR URL from output
+            pr_url = result.stdout.strip()
+            
+            # Extract PR number from URL
+            pr_match = re.search(r'/pull/(\d+)', pr_url)
+            if not pr_match:
+                raise GitHubIntegrationError(f"Could not extract PR number from URL: {pr_url}")
+            
+            pr_number = int(pr_match.group(1))
+            
+            logger.info(f"Successfully created PR #{pr_number}: {pr_url}")
+            
+            return PullRequest(
+                number=pr_number,
+                title=title,
+                description=description,
+                status=PRStatus.DRAFT if draft else PRStatus.OPEN,
+                branch=head_branch,
+                base_branch=base_branch,
+                url=pr_url
+            )
+            
+        except subprocess.CalledProcessError as e:
+            raise GitHubIntegrationError(f"Failed to create PR: {e.stderr}")
+        except Exception as e:
+            raise GitHubIntegrationError(f"Failed to create PR: {e}")
+    
+    async def add_pr_labels(self, pr_number: int, labels: List[str]) -> None:
+        """Add labels to a pull request.
+        
+        Args:
+            pr_number: PR number
+            labels: List of label names
+            
+        Raises:
+            GitHubIntegrationError: If adding labels fails
+        """
+        if not labels:
+            return
+            
+        try:
+            logger.debug(f"Adding labels to PR #{pr_number}: {labels}")
+            
+            # Build command
+            labels_str = ",".join(labels)
+            cmd = f'gh pr edit {pr_number} --add-label "{labels_str}"'
+            
+            run_command(cmd, check=True)
+            logger.debug(f"Successfully added labels to PR #{pr_number}")
+            
+        except ShellError as e:
+            logger.warning(f"Failed to add labels to PR #{pr_number}: {e.stderr}")
+            # Don't raise - labels are not critical for PR creation
+    
+    async def add_pr_assignees(self, pr_number: int, assignees: List[str]) -> None:
+        """Add assignees to a pull request.
+        
+        Args:
+            pr_number: PR number
+            assignees: List of assignee usernames
+            
+        Raises:
+            GitHubIntegrationError: If adding assignees fails
+        """
+        if not assignees:
+            return
+            
+        try:
+            logger.debug(f"Adding assignees to PR #{pr_number}: {assignees}")
+            
+            # Build command
+            assignees_str = ",".join(assignees)
+            cmd = f'gh pr edit {pr_number} --add-assignee "{assignees_str}"'
+            
+            run_command(cmd, check=True)
+            logger.debug(f"Successfully added assignees to PR #{pr_number}")
+            
+        except ShellError as e:
+            logger.warning(f"Failed to add assignees to PR #{pr_number}: {e.stderr}")
+            # Don't raise - assignees are not critical for PR creation
+    
+    async def request_pr_reviewers(self, pr_number: int, reviewers: List[str]) -> None:
+        """Request reviewers for a pull request.
+        
+        Args:
+            pr_number: PR number
+            reviewers: List of reviewer usernames
+            
+        Raises:
+            GitHubIntegrationError: If requesting reviewers fails
+        """
+        if not reviewers:
+            return
+            
+        try:
+            logger.debug(f"Requesting reviewers for PR #{pr_number}: {reviewers}")
+            
+            # Build command
+            reviewers_str = ",".join(reviewers)
+            cmd = f'gh pr edit {pr_number} --add-reviewer "{reviewers_str}"'
+            
+            run_command(cmd, check=True)
+            logger.debug(f"Successfully requested reviewers for PR #{pr_number}")
+            
+        except ShellError as e:
+            logger.warning(f"Failed to request reviewers for PR #{pr_number}: {e.stderr}")
+            # Don't raise - reviewers are not critical for PR creation
 
 
 def validate_github_auth() -> bool:
