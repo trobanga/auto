@@ -21,6 +21,55 @@ class ProcessWorkflowError(Exception):
     pass
 
 
+def determine_resume_point(state: WorkflowState) -> tuple[str, str]:
+    """Determine where to resume workflow based on current state.
+    
+    Args:
+        state: Current workflow state
+        
+    Returns:
+        Tuple of (resume_point, reason) where resume_point is one of:
+        - "fetch": Start from issue fetching
+        - "worktree": Start from worktree creation
+        - "ai": Start from AI implementation
+        - "pr": Start from PR creation
+        - "completed": Workflow already completed
+        - "failed": Workflow failed, needs manual intervention
+    """
+    # Check if workflow is already completed
+    if state.status == WorkflowStatus.COMPLETED:
+        return "completed", "Workflow already completed successfully"
+    
+    # Check if workflow failed
+    if state.status == WorkflowStatus.FAILED:
+        # Check metadata to see what failed
+        if 'ai_error' in state.metadata:
+            return "ai", "AI implementation failed, resuming from AI step"
+        elif 'pr_error' in state.metadata:
+            return "pr", "PR creation failed, resuming from PR step"
+        else:
+            return "worktree", "Workflow failed, resuming from worktree creation"
+    
+    # Check if PR was created
+    if state.pr_number is not None:
+        return "completed", "PR already created, workflow complete"
+    
+    # Check if AI implementation was completed
+    if state.ai_status == AIStatus.IMPLEMENTED and state.ai_response:
+        return "pr", "AI implementation completed, resuming from PR creation"
+    
+    # Check if worktree exists
+    if state.worktree_info and state.worktree_info.exists():
+        return "ai", "Worktree exists, resuming from AI implementation"
+    
+    # Check if issue was fetched
+    if state.issue is not None:
+        return "worktree", "Issue fetched, resuming from worktree creation"
+    
+    # Default to start from beginning
+    return "fetch", "No progress detected, starting from issue fetch"
+
+
 def process_issue_workflow(
     issue_id: str, 
     base_branch: Optional[str] = None,
@@ -31,7 +80,8 @@ def process_issue_workflow(
     prompt_template: Optional[str] = None,
     prompt_append: Optional[str] = None,
     show_prompt: bool = False,
-    draft_pr: bool = False
+    draft_pr: bool = False,
+    resume: bool = False
 ) -> WorkflowState:
     """Enhanced process issue workflow: fetch → worktree → AI implementation → PR creation.
     
@@ -46,6 +96,7 @@ def process_issue_workflow(
         prompt_append: Text to append to AI prompt
         show_prompt: Show resolved prompt instead of executing AI
         draft_pr: Create PR as draft
+        resume: Resume interrupted workflow from saved state
         
     Returns:
         Updated workflow state with complete process information
@@ -53,7 +104,7 @@ def process_issue_workflow(
     Raises:
         ProcessWorkflowError: If process workflow fails
     """
-    logger.info(f"Starting process workflow for issue: {issue_id}")
+    logger.info(f"Starting process workflow for issue: {issue_id} (resume={resume})")
     
     try:
         # Parse issue identifier for validation
@@ -63,41 +114,103 @@ def process_issue_workflow(
         config = get_config()
         core = get_core()
         
-        # First, ensure we have issue details
-        issue = get_issue_from_state(identifier.issue_id)
+        # Initialize resume point
+        resume_point = "fetch"
         
-        if issue is None:
-            # Need to fetch issue first
-            logger.info(f"Issue not found in state, fetching: {identifier.issue_id}")
-            state = fetch_issue_workflow_sync(identifier.issue_id)
-            issue = state.issue
-        else:
-            # Get existing state
+        # Handle resume logic
+        if resume:
+            # Get existing state for resume
             state = core.get_workflow_state(identifier.issue_id)
             if state is None:
-                raise ProcessWorkflowError(f"Workflow state not found for {identifier.issue_id}")
+                raise ProcessWorkflowError(f"No existing workflow state found for resume: {identifier.issue_id}")
+            
+            # Determine where to resume from
+            resume_point, resume_reason = determine_resume_point(state)
+            logger.info(f"Resume analysis: {resume_reason}")
+            
+            # Handle special resume cases
+            if resume_point == "completed":
+                logger.info("Workflow already completed, nothing to resume")
+                return state
+            elif resume_point == "failed":
+                logger.warning("Workflow failed previously, attempting to continue from last known point")
+            
+            # Get issue from state (should exist for resume)
+            issue = state.issue
+            if issue is None:
+                logger.warning("Issue not found in state during resume, fetching...")
+                state = fetch_issue_workflow_sync(identifier.issue_id)
+                issue = state.issue
+        else:
+            # Normal workflow start - ensure we have issue details
+            issue = get_issue_from_state(identifier.issue_id)
+            
+            if issue is None:
+                # Need to fetch issue first
+                logger.info(f"Issue not found in state, fetching: {identifier.issue_id}")
+                state = fetch_issue_workflow_sync(identifier.issue_id)
+                issue = state.issue
+                resume_point = "worktree"  # Continue from worktree creation
+            else:
+                # Get existing state
+                state = core.get_workflow_state(identifier.issue_id)
+                if state is None:
+                    raise ProcessWorkflowError(f"Workflow state not found for {identifier.issue_id}")
+                resume_point = "worktree"  # Continue from worktree creation
         
         if issue is None:
             raise ProcessWorkflowError(f"Failed to get issue details for {identifier.issue_id}")
         
-        # Update status to implementing
-        state.update_status(WorkflowStatus.IMPLEMENTING)
-        core.save_workflow_state(state)
+        # Only update status if not resuming from completed/failed states
+        if not resume or (resume and resume_point not in ["completed"]):
+            state.update_status(WorkflowStatus.IMPLEMENTING)
+            core.save_workflow_state(state)
         
-        # Determine base branch
-        if base_branch is None:
-            base_branch = _determine_base_branch(state)
-        
-        logger.info(f"Creating worktree for issue {issue.id} from base branch: {base_branch}")
-        
-        # Create worktree
-        worktree_manager = GitWorktreeManager(config)
-        worktree_info = worktree_manager.create_worktree(issue, base_branch)
-        
-        # Update workflow state with worktree information
-        state.worktree = worktree_info.path
-        state.worktree_info = worktree_info
-        state.branch = worktree_info.branch
+        # Worktree creation step (skip if resuming from AI or PR)
+        if not resume or resume_point in ["fetch", "worktree"]:
+            # Determine base branch
+            if base_branch is None:
+                base_branch = _determine_base_branch(state)
+            
+            logger.info(f"Creating worktree for issue {issue.id} from base branch: {base_branch}")
+            
+            # Create worktree
+            worktree_manager = GitWorktreeManager(config)
+            worktree_info = worktree_manager.create_worktree(issue, base_branch)
+            
+            # Update workflow state with worktree information
+            state.worktree = worktree_info.path
+            state.worktree_info = worktree_info
+            state.branch = worktree_info.branch
+            
+            # Update metadata
+            state.metadata.update({
+                'base_branch': base_branch,
+                'worktree_created': True,
+                'worktree_path': worktree_info.path,
+                'branch_name': worktree_info.branch,
+            })
+            
+            logger.info(f"Worktree created: {worktree_info.path}")
+            logger.info(f"Branch: {worktree_info.branch}")
+        else:
+            logger.info(f"Skipping worktree creation (resuming from {resume_point})")
+            # Validate existing worktree still exists
+            if state.worktree_info and not state.worktree_info.exists():
+                logger.warning("Existing worktree no longer exists, recreating...")
+                # Fall back to creating worktree
+                if base_branch is None:
+                    base_branch = _determine_base_branch(state)
+                
+                worktree_manager = GitWorktreeManager(config)
+                worktree_info = worktree_manager.create_worktree(issue, base_branch)
+                
+                # Update workflow state with new worktree information
+                state.worktree = worktree_info.path
+                state.worktree_info = worktree_info
+                state.branch = worktree_info.branch
+                
+                logger.info(f"Worktree recreated: {worktree_info.path}")
         
         # Add repository context if we have it
         if state.repository is None:
@@ -108,50 +221,43 @@ def process_issue_workflow(
             except Exception as e:
                 logger.debug(f"Could not detect repository: {e}")
         
-        # Update metadata
-        state.metadata.update({
-            'base_branch': base_branch,
-            'worktree_created': True,
-            'worktree_path': worktree_info.path,
-            'branch_name': worktree_info.branch,
-        })
-        
-        # Save updated state after worktree creation
+        # Save updated state after worktree handling
         core.save_workflow_state(state)
         
-        logger.info(f"Worktree created: {worktree_info.path}")
-        logger.info(f"Branch: {worktree_info.branch}")
-        
-        # AI Implementation step
-        if enable_ai:
-            logger.info("Starting AI implementation step")
-            try:
-                state = asyncio.run(implement_issue_workflow(
-                    issue=issue,
-                    workflow_state=state,
-                    prompt_override=prompt_override,
-                    prompt_file=prompt_file,
-                    prompt_template=prompt_template,
-                    prompt_append=prompt_append,
-                    show_prompt=show_prompt
-                ))
-                
-                # Save state after AI implementation
-                core.save_workflow_state(state)
-                
-                if show_prompt:
-                    logger.info("Prompt shown, stopping workflow")
-                    return state
-                
-                if state.ai_status == AIStatus.IMPLEMENTED:
-                    logger.info("AI implementation completed successfully")
-                else:
-                    logger.warning(f"AI implementation status: {state.ai_status}")
+        # AI Implementation step (skip if resuming from PR or already implemented)
+        if enable_ai and (not resume or resume_point in ["fetch", "worktree", "ai"]):
+            # Check if AI is already implemented
+            if resume and state.ai_status == AIStatus.IMPLEMENTED and state.ai_response:
+                logger.info("AI implementation already completed, skipping")
+            else:
+                logger.info("Starting AI implementation step")
+                try:
+                    state = asyncio.run(implement_issue_workflow(
+                        issue=issue,
+                        workflow_state=state,
+                        prompt_override=prompt_override,
+                        prompt_file=prompt_file,
+                        prompt_template=prompt_template,
+                        prompt_append=prompt_append,
+                        show_prompt=show_prompt
+                    ))
                     
-            except ImplementationError as e:
-                # Don't log here - error already logged at lower levels
-                state.update_status(WorkflowStatus.FAILED)
-                state.metadata['ai_error'] = str(e)
+                    # Save state after AI implementation
+                    core.save_workflow_state(state)
+                    
+                    if show_prompt:
+                        logger.info("Prompt shown, stopping workflow")
+                        return state
+                    
+                    if state.ai_status == AIStatus.IMPLEMENTED:
+                        logger.info("AI implementation completed successfully")
+                    else:
+                        logger.warning(f"AI implementation status: {state.ai_status}")
+                        
+                except ImplementationError as e:
+                    # Don't log here - error already logged at lower levels
+                    state.update_status(WorkflowStatus.FAILED)
+                    state.metadata['ai_error'] = str(e)
                 core.save_workflow_state(state)
                 
                 # Always fail when AI implementation fails - don't continue to PR creation
@@ -159,29 +265,33 @@ def process_issue_workflow(
         else:
             logger.info("AI implementation step skipped")
         
-        # PR Creation step
-        if enable_pr:
-            logger.info("Starting PR creation step")
-            try:
-                state = asyncio.run(create_pull_request_workflow(
-                    issue=issue,
-                    workflow_state=state,
-                    draft=draft_pr
-                ))
-                
-                # Save state after PR creation
-                core.save_workflow_state(state)
-                
-                if state.pr_number:
-                    logger.info(f"PR #{state.pr_number} created successfully")
-                else:
-                    logger.warning("PR creation completed but no PR number available")
+        # PR Creation step (skip if already created)
+        if enable_pr and (not resume or resume_point in ["fetch", "worktree", "ai", "pr"]):
+            # Check if PR is already created
+            if resume and state.pr_number is not None:
+                logger.info(f"PR #{state.pr_number} already created, skipping")
+            else:
+                logger.info("Starting PR creation step")
+                try:
+                    state = asyncio.run(create_pull_request_workflow(
+                        issue=issue,
+                        workflow_state=state,
+                        draft=draft_pr
+                    ))
                     
-            except PRCreationError as e:
-                state.update_status(WorkflowStatus.FAILED)
-                state.metadata['pr_error'] = str(e)
-                core.save_workflow_state(state)
-                raise ProcessWorkflowError(f"PR creation failed: {e}")
+                    # Save state after PR creation
+                    core.save_workflow_state(state)
+                    
+                    if state.pr_number:
+                        logger.info(f"PR #{state.pr_number} created successfully")
+                    else:
+                        logger.warning("PR creation completed but no PR number available")
+                        
+                except PRCreationError as e:
+                    state.update_status(WorkflowStatus.FAILED)
+                    state.metadata['pr_error'] = str(e)
+                    core.save_workflow_state(state)
+                    raise ProcessWorkflowError(f"PR creation failed: {e}")
         else:
             logger.info("PR creation step skipped")
         

@@ -720,6 +720,7 @@ def implement(
 @click.option("--agent", help="Custom AI agent to use for implementation")
 @click.option("--no-ai", is_flag=True, help="Skip AI implementation step")
 @click.option("--no-pr", is_flag=True, help="Skip PR creation step")
+@click.option("--resume", is_flag=True, help="Resume interrupted workflow from saved state")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
 def process(
     issue_id: str, 
@@ -732,6 +733,7 @@ def process(
     agent: str, 
     no_ai: bool, 
     no_pr: bool, 
+    resume: bool,
     verbose: bool
 ) -> None:
     """Process issue: fetch details, create worktree, run AI implementation, and create PR."""
@@ -748,6 +750,8 @@ def process(
         if verbose:
             enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Processing {identifier.provider.value} issue: {identifier.issue_id}")
+            if resume:
+                console.print("[blue]Info:[/blue] Resuming from existing workflow state")
             if no_ai:
                 console.print("[blue]Info:[/blue] AI implementation step will be skipped")
             if no_pr:
@@ -757,18 +761,30 @@ def process(
             if agent:
                 console.print(f"[blue]Info:[/blue] Using custom agent: {agent}")
         
-        # Validate prerequisites
-        console.print("[blue]Info:[/blue] Validating prerequisites...")
-        errors = validate_process_prerequisites(identifier.issue_id)
-        
-        if errors:
-            console.print(f"[red]Error:[/red] Prerequisites not met:")
-            for error in errors:
-                console.print(f"  - {error}")
-            sys.exit(1)
-        
-        if verbose:
-            console.print("[green]✓[/green] Prerequisites validated")
+        # Validate prerequisites (skip for resume if existing state is valid)
+        if not resume:
+            console.print("[blue]Info:[/blue] Validating prerequisites...")
+            errors = validate_process_prerequisites(identifier.issue_id)
+            
+            if errors:
+                console.print(f"[red]Error:[/red] Prerequisites not met:")
+                for error in errors:
+                    console.print(f"  - {error}")
+                sys.exit(1)
+            
+            if verbose:
+                console.print("[green]✓[/green] Prerequisites validated")
+        else:
+            # For resume, just check if state exists
+            core = get_core()
+            existing_state = core.get_workflow_state(identifier.issue_id)
+            if existing_state is None:
+                console.print(f"[red]Error:[/red] No existing workflow state found for {identifier.issue_id}")
+                console.print("[yellow]Hint:[/yellow] Use 'auto process' without --resume to start a new workflow")
+                sys.exit(1)
+            
+            if verbose:
+                console.print(f"[green]✓[/green] Found existing workflow state (status: {existing_state.status.value})")
         
         # Override agent if specified
         if agent:
@@ -790,7 +806,8 @@ def process(
             prompt_file=prompt_file,
             prompt_template=prompt_template,
             prompt_append=prompt_append,
-            show_prompt=show_prompt
+            show_prompt=show_prompt,
+            resume=resume
         )
         
         # Handle show prompt early exit
