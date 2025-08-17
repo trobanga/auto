@@ -224,6 +224,216 @@ class ClaudeIntegration:
             self.logger.error(f"AI review update failed for {repository}: {e}")
             raise
 
+    async def analyze_review_comments(
+        self,
+        comments: str,
+        repository: str,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Analyze review comments using AI for categorization and prioritization.
+        
+        Args:
+            comments: Formatted review comments to analyze
+            repository: Repository name
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing comment analysis results
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            if custom_prompt:
+                prompt = custom_prompt
+            else:
+                prompt = f"""Analyze the following review comments and provide structured analysis:
+
+Repository: {repository}
+
+Review Comments:
+{comments}
+
+Please provide analysis in the following format:
+1. Categorize each comment (bug, security, performance, code_quality, style, documentation, testing, suggestion, question, nitpick)
+2. Assign priority (critical, high, medium, low)
+3. Determine if actionable (requires code changes)
+4. Estimate complexity (1-10 scale)
+5. Suggest addressing order
+
+Focus on identifying the most critical issues that need immediate attention."""
+            
+            self.logger.info(f"Analyzing review comments for {repository}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.review_agent or "pull-request-reviewer"
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"Comment analysis failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "comment_analysis")
+            
+            self.logger.info(f"Comment analysis completed for {repository}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"Comment analysis failed for {repository}: {e}")
+            raise
+
+    async def generate_comment_response(
+        self,
+        comment: str,
+        context: Dict[str, Any],
+        repository: str,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Generate professional response to a specific review comment.
+        
+        Args:
+            comment: Individual review comment to respond to
+            context: Additional context (file, line, issue details)
+            repository: Repository name
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing generated response
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            if custom_prompt:
+                prompt = custom_prompt
+            else:
+                # Build context information
+                context_info = []
+                if context.get('file_path'):
+                    context_info.append(f"File: {context['file_path']}")
+                if context.get('line_number'):
+                    context_info.append(f"Line: {context['line_number']}")
+                if context.get('issue_title'):
+                    context_info.append(f"Original Issue: {context['issue_title']}")
+                
+                context_str = "\n".join(context_info) if context_info else "General comment"
+                
+                prompt = f"""Generate a professional response to this review comment:
+
+Comment: {comment}
+
+Context:
+{context_str}
+Repository: {repository}
+
+Please provide:
+1. Acknowledgment of the feedback
+2. Planned action to address the comment (if actionable)
+3. Implementation approach (if code changes needed)
+4. Any questions or clarifications needed
+
+Keep the response professional, concise, and constructive. Show that you understand the concern and have a plan to address it."""
+            
+            self.logger.debug(f"Generating response for comment in {repository}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.update_agent or "coder"
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"Comment response generation failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "comment_response")
+            
+            self.logger.debug(f"Comment response generated for {repository}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"Comment response generation failed for {repository}: {e}")
+            raise
+
+    async def execute_targeted_update(
+        self,
+        update_description: str,
+        target_files: List[str],
+        worktree_path: str,
+        repository: str,
+        validation_steps: Optional[List[str]] = None,
+        custom_prompt: Optional[str] = None
+    ) -> AIResponse:
+        """
+        Execute targeted code update for specific files and requirements.
+        
+        Args:
+            update_description: Description of what needs to be updated
+            target_files: List of files to focus on
+            worktree_path: Path to worktree for updates
+            repository: Repository name
+            validation_steps: Optional validation steps to perform
+            custom_prompt: Optional custom prompt override
+            
+        Returns:
+            AIResponse containing update results
+        """
+        try:
+            await self._validate_prerequisites()
+            
+            if custom_prompt:
+                prompt = custom_prompt
+            else:
+                files_str = "\n".join(f"- {file}" for file in target_files)
+                validation_str = ""
+                if validation_steps:
+                    validation_str = f"""
+
+Validation Requirements:
+{chr(10).join(f"- {step}" for step in validation_steps)}"""
+                
+                prompt = f"""Implement the following targeted update:
+
+Update Description: {update_description}
+
+Target Files:
+{files_str}
+
+Repository: {repository}{validation_str}
+
+Please:
+1. Focus on the specified files
+2. Make precise, targeted changes to address the requirements
+3. Ensure changes are consistent with existing code style
+4. Test your changes if possible
+5. Provide clear documentation of what was changed
+
+Be thorough but focused - only modify what's necessary to address the specific requirements."""
+            
+            self.logger.info(f"Executing targeted update in {repository}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.update_agent or "coder",
+                working_directory=worktree_path
+            )
+            
+            if not result.success:
+                raise AIIntegrationError(
+                    f"Targeted update failed: {result.error}",
+                    exit_code=result.exit_code
+                )
+            
+            ai_response = self._parse_ai_response(result.output, "targeted_update")
+            
+            self.logger.info(f"Targeted update completed for {repository}")
+            return ai_response
+            
+        except Exception as e:
+            self.logger.error(f"Targeted update failed for {repository}: {e}")
+            raise
+
     async def generate_pr_description(
         self,
         issue: Issue,
