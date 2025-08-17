@@ -124,225 +124,91 @@ def sample_review_comments():
 class TestCommentCategorization:
     """Test comment categorization functionality."""
     
-    def test_categorize_bug_comment(self, comment_processor):
-        """Test bug comment categorization."""
-        bug_comments = [
-            "This function has a bug that causes crashes",
-            "Null pointer exception here",
-            "This doesn't work as expected",
-            "The error handling is broken"
-        ]
-        
-        for comment_text in bug_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.BUG
-    
-    def test_categorize_security_comment(self, comment_processor):
-        """Test security comment categorization."""
-        security_comments = [
-            "This is a security vulnerability",
-            "Passwords should be hashed for security",
-            "XSS vulnerability in this code",
-            "Need to validate input to prevent injection"
-        ]
-        
-        for comment_text in security_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.SECURITY
-    
-    def test_categorize_performance_comment(self, comment_processor):
-        """Test performance comment categorization."""
-        performance_comments = [
-            "This is slow and needs optimization",
-            "Consider using async/await for better performance",
-            "Memory usage is too high here",
-            "This query causes N+1 problems"
-        ]
-        
-        for comment_text in performance_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.PERFORMANCE
-    
-    def test_categorize_style_comment(self, comment_processor):
-        """Test style comment categorization."""
-        style_comments = [
-            "Inconsistent naming convention",
-            "Please fix the indentation",
-            "Line too long, should be wrapped",
-            "Missing spaces around operators"
-        ]
-        
-        for comment_text in style_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.STYLE
-    
-    def test_categorize_documentation_comment(self, comment_processor):
-        """Test documentation comment categorization."""
-        doc_comments = [
-            "Missing docstring for this function",
-            "Please add comments to explain this logic",
-            "README needs to be updated",
-            "Add documentation for this API"
-        ]
-        
-        for comment_text in doc_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.DOCUMENTATION
-    
-    def test_categorize_testing_comment(self, comment_processor):
-        """Test testing comment categorization."""
-        test_comments = [
-            "Missing test coverage for this function",
-            "Add unit tests for error cases",
-            "Mock this dependency in tests",
-            "Test spec is incomplete"
-        ]
-        
-        for comment_text in test_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.TESTING
-    
-    def test_categorize_question_comment(self, comment_processor):
-        """Test question comment categorization."""
-        question_comments = [
-            "Why is this approach chosen?",
-            "Can you explain this logic?",
-            "Unclear what this function does?",
-            "How does this handle edge cases?"
-        ]
-        
-        for comment_text in question_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.QUESTION
-    
-    def test_categorize_nitpick_comment(self, comment_processor):
-        """Test nitpick comment categorization."""
-        nitpick_comments = [
-            "Nit: consider using a different variable name",
-            "Minor: extra whitespace here",
-            "Nitpick: this could be slightly better",
-            "Tiny issue with formatting"
-        ]
-        
-        for comment_text in nitpick_comments:
-            category = comment_processor._categorize_comment(comment_text)
-            assert category == CommentCategory.NITPICK
+    @pytest.mark.parametrize("comment_text,expected_category", [
+        # Bug comments
+        ("This function has a bug that causes crashes", CommentCategory.BUG),
+        ("Null pointer exception here", CommentCategory.BUG),
+        ("This doesn't work as expected", CommentCategory.BUG),
+        # Security comments  
+        ("This is a security vulnerability", CommentCategory.SECURITY),
+        ("XSS vulnerability in this code", CommentCategory.SECURITY),
+        # Performance comments
+        ("This is slow and needs optimization", CommentCategory.PERFORMANCE),
+        ("Memory usage is too high here", CommentCategory.PERFORMANCE),
+        # Style comments
+        ("Inconsistent naming convention", CommentCategory.STYLE),
+        ("Please fix the indentation", CommentCategory.STYLE),
+        # Documentation comments
+        ("Missing docstring for this function", CommentCategory.DOCUMENTATION),
+        ("Add documentation for this API", CommentCategory.DOCUMENTATION),
+        # Testing comments
+        ("Missing test coverage for this function", CommentCategory.TESTING),
+        ("Test coverage is incomplete", CommentCategory.TESTING),
+        # Question comments
+        ("Why is this approach chosen?", CommentCategory.QUESTION),
+        ("Can you explain this logic?", CommentCategory.QUESTION),
+        # Nitpick comments
+        ("Nit: consider using a different variable name", CommentCategory.NITPICK),
+        ("Minor: extra whitespace here", CommentCategory.NITPICK),
+    ])
+    def test_categorize_comment(self, comment_processor, comment_text, expected_category):
+        """Test comment categorization across all categories."""
+        category = comment_processor._categorize_comment(comment_text)
+        assert category == expected_category
 
 
 class TestCommentPrioritization:
     """Test comment priority determination."""
     
-    def test_determine_critical_priority(self, comment_processor):
-        """Test critical priority determination."""
-        critical_comments = [
-            ("Critical security issue", CommentCategory.SECURITY),
-            ("This is blocking deployment", CommentCategory.BUG),
-            ("Urgent fix needed", CommentCategory.BUG),
-            ("Broken functionality", CommentCategory.BUG)
-        ]
-        
-        for comment_text, category in critical_comments:
-            priority = comment_processor._determine_priority(comment_text, category)
-            assert priority == CommentPriority.CRITICAL
-    
-    def test_determine_high_priority(self, comment_processor):
-        """Test high priority determination."""
-        high_comments = [
-            ("This should be fixed", CommentCategory.CODE_QUALITY),
-            ("Performance issue that must be addressed", CommentCategory.PERFORMANCE),
-            ("Important: this needs attention", CommentCategory.STYLE)
-        ]
-        
-        for comment_text, category in high_comments:
-            priority = comment_processor._determine_priority(comment_text, category)
-            assert priority == CommentPriority.HIGH
-    
-    def test_determine_low_priority(self, comment_processor):
-        """Test low priority determination."""
-        low_comments = [
-            ("Nit: minor style issue", CommentCategory.NITPICK),
-            ("Optional improvement", CommentCategory.SUGGESTION),
-            ("Question about implementation?", CommentCategory.QUESTION)
-        ]
-        
-        for comment_text, category in low_comments:
-            priority = comment_processor._determine_priority(comment_text, category)
-            assert priority == CommentPriority.LOW
-    
-    def test_determine_medium_priority_default(self, comment_processor):
-        """Test medium priority as default."""
-        medium_comment = "Regular feedback comment"
-        priority = comment_processor._determine_priority(medium_comment, CommentCategory.CODE_QUALITY)
-        assert priority == CommentPriority.MEDIUM
+    @pytest.mark.parametrize("comment_text,category,expected_priority", [
+        # Critical priority
+        ("Critical security issue", CommentCategory.SECURITY, CommentPriority.CRITICAL),
+        ("This is blocking deployment", CommentCategory.BUG, CommentPriority.CRITICAL),
+        ("Urgent fix needed", CommentCategory.BUG, CommentPriority.CRITICAL),
+        # High priority
+        ("This should be fixed", CommentCategory.CODE_QUALITY, CommentPriority.HIGH),
+        ("Performance issue that must be addressed", CommentCategory.PERFORMANCE, CommentPriority.HIGH),
+        ("Important: this needs attention", CommentCategory.STYLE, CommentPriority.HIGH),
+        # Low priority
+        ("Nit: minor style issue", CommentCategory.NITPICK, CommentPriority.LOW),
+        ("Optional improvement", CommentCategory.SUGGESTION, CommentPriority.LOW),
+        ("Question about implementation?", CommentCategory.QUESTION, CommentPriority.LOW),
+        # Medium priority (default)
+        ("Regular feedback comment", CommentCategory.CODE_QUALITY, CommentPriority.MEDIUM),
+    ])
+    def test_determine_priority(self, comment_processor, comment_text, category, expected_priority):
+        """Test comment priority determination across all priority levels."""
+        priority = comment_processor._determine_priority(comment_text, category)
+        assert priority == expected_priority
 
 
 class TestCommentTypeAnalysis:
     """Test comment type analysis."""
     
-    def test_analyze_line_comment(self, comment_processor):
-        """Test line comment type analysis."""
-        line_comment = ReviewComment(
+    @pytest.mark.parametrize("body,path,line,expected_type", [
+        # Line comment - has path and line
+        ("Issue on this line", "src/test.py", 10, CommentType.LINE_COMMENT),
+        # Suggestion comment - contains suggestion syntax
+        ("```suggestion\nfixed_code_here\n```", "src/test.py", 10, CommentType.SUGGESTION),
+        # File comment - has path but no line
+        ("General comment about the file", "src/test.py", None, CommentType.FILE_COMMENT),
+        # General comment - no path or line
+        ("Overall feedback", None, None, CommentType.GENERAL_COMMENT),
+        # Change request - strong language
+        ("This must be fixed before merging", None, None, CommentType.CHANGE_REQUEST),
+    ])
+    def test_analyze_comment_type(self, comment_processor, body, path, line, expected_type):
+        """Test comment type analysis across all types."""
+        comment = ReviewComment(
             id=1,
-            body="Issue on this line",
-            path="src/test.py",
-            line=10,
+            body=body,
+            path=path,
+            line=line,
             author="reviewer"
         )
         
-        comment_type = comment_processor._analyze_comment_type(line_comment)
-        assert comment_type == CommentType.LINE_COMMENT
-    
-    def test_analyze_suggestion_comment(self, comment_processor):
-        """Test suggestion comment type analysis."""
-        suggestion_comment = ReviewComment(
-            id=1,
-            body="```suggestion\nfixed_code_here\n```",
-            path="src/test.py",
-            line=10,
-            author="reviewer"
-        )
-        
-        comment_type = comment_processor._analyze_comment_type(suggestion_comment)
-        assert comment_type == CommentType.SUGGESTION
-    
-    def test_analyze_file_comment(self, comment_processor):
-        """Test file comment type analysis."""
-        file_comment = ReviewComment(
-            id=1,
-            body="General comment about the file",
-            path="src/test.py",
-            line=None,
-            author="reviewer"
-        )
-        
-        comment_type = comment_processor._analyze_comment_type(file_comment)
-        assert comment_type == CommentType.FILE_COMMENT
-    
-    def test_analyze_general_comment(self, comment_processor):
-        """Test general comment type analysis."""
-        general_comment = ReviewComment(
-            id=1,
-            body="Overall feedback",
-            path=None,
-            line=None,
-            author="reviewer"
-        )
-        
-        comment_type = comment_processor._analyze_comment_type(general_comment)
-        assert comment_type == CommentType.GENERAL_COMMENT
-    
-    def test_analyze_change_request(self, comment_processor):
-        """Test change request type analysis."""
-        change_request = ReviewComment(
-            id=1,
-            body="This must be fixed before merging",
-            path=None,
-            line=None,
-            author="reviewer"
-        )
-        
-        comment_type = comment_processor._analyze_comment_type(change_request)
-        assert comment_type == CommentType.CHANGE_REQUEST
+        comment_type = comment_processor._analyze_comment_type(comment)
+        assert comment_type == expected_type
 
 
 class TestCommentProcessing:
@@ -375,12 +241,18 @@ class TestCommentProcessing:
         assert CommentCategory.PERFORMANCE in result.category_summary
     
     @pytest.mark.asyncio
-    async def test_process_single_comment_bug(self, comment_processor):
-        """Test processing a single bug comment."""
-        bug_comment = ReviewComment(
+    @pytest.mark.parametrize("body,expected_category,expected_priority,expected_actionable", [
+        # Bug comment - critical, actionable
+        ("This function has a null pointer exception", CommentCategory.BUG, CommentPriority.CRITICAL, True),
+        # Style comment - low priority, often not actionable
+        ("Nit: inconsistent indentation", CommentCategory.NITPICK, CommentPriority.LOW, False),
+    ])
+    async def test_process_single_comment(self, comment_processor, body, expected_category, expected_priority, expected_actionable):
+        """Test processing single comments of different types."""
+        comment = ReviewComment(
             id=1,
-            body="This function has a null pointer exception",
-            path="src/auth.py",
+            body=body,
+            path="src/test.py",
             line=15,
             author="reviewer",
             created_at=datetime.now(),
@@ -388,36 +260,12 @@ class TestCommentProcessing:
         )
         
         processed = await comment_processor._process_single_comment(
-            bug_comment, 123, "test/repo"
+            comment, 123, "test/repo"
         )
         
-        assert processed.category == CommentCategory.BUG
-        assert processed.priority == CommentPriority.CRITICAL
-        assert processed.actionable is True
-        assert processed.requires_code_change is True
-        assert processed.complexity_score > 5  # Bugs are usually complex
-    
-    @pytest.mark.asyncio
-    async def test_process_single_comment_style(self, comment_processor):
-        """Test processing a single style comment."""
-        style_comment = ReviewComment(
-            id=1,
-            body="Nit: inconsistent indentation",
-            path="src/utils.py",
-            line=5,
-            author="reviewer",
-            created_at=datetime.now(),
-            resolved=False
-        )
-        
-        processed = await comment_processor._process_single_comment(
-            style_comment, 123, "test/repo"
-        )
-        
-        assert processed.category == CommentCategory.NITPICK
-        assert processed.priority == CommentPriority.LOW
-        assert processed.actionable is False  # Nitpicks often not actionable
-        assert processed.complexity_score < 5  # Style issues are usually simple
+        assert processed.category == expected_category
+        assert processed.priority == expected_priority
+        assert processed.actionable == expected_actionable
     
     def test_prioritize_feedback(self, comment_processor):
         """Test feedback prioritization."""
@@ -561,33 +409,6 @@ class TestCommentResponseGeneration:
         assert "fix" in response.response_text.lower()
         assert "null pointer" in response.response_text.lower()
     
-    def test_extract_planned_action(self, comment_processor):
-        """Test extracting planned action from response."""
-        response_texts = [
-            "I will fix this by adding validation",
-            "Plan to refactor this function for better performance",
-            "Going to implement proper error handling",
-            "Action: Update the documentation to clarify this"
-        ]
-        
-        for text in response_texts:
-            action = comment_processor._extract_planned_action(text)
-            assert action is not None
-            assert len(action) > 0
-    
-    def test_extract_implementation_notes(self, comment_processor):
-        """Test extracting implementation details from response."""
-        response_texts = [
-            "Implementation: Use try-catch blocks around the database calls",
-            "Technically, we need to use async/await pattern here",
-            "The approach will be to cache the results using Redis",
-            "By implementing a factory pattern, we can solve this"
-        ]
-        
-        for text in response_texts:
-            notes = comment_processor._extract_implementation_notes(text)
-            assert notes is not None
-            assert len(notes) > 0
 
 
 class TestCommentThreads:

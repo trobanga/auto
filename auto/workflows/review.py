@@ -158,7 +158,8 @@ async def trigger_ai_review(state: ReviewCycleState) -> None:
     try:
         logger.info(f"Triggering AI review for PR #{state.pr_number}")
         
-        ai_integration = ClaudeIntegration()
+        config = get_config()
+        ai_integration = ClaudeIntegration(config.ai)
         review_integration = GitHubReviewIntegration()
         
         # Execute AI review
@@ -182,8 +183,8 @@ async def trigger_ai_review(state: ReviewCycleState) -> None:
         state.ai_reviews.append({
             "iteration": state.iteration,
             "timestamp": time.time(),
-            "response": ai_response.summary,
-            "comments_count": len(ai_response.comments),
+            "response": ai_response.summary or ai_response.content,
+            "comments_count": len(ai_response.comments) if ai_response.comments else 0,
             "status": "completed"
         })
         
@@ -360,7 +361,8 @@ async def trigger_ai_update(state: ReviewCycleState) -> None:
             logger.info("No unresolved comments to address")
             return
         
-        ai_integration = ClaudeIntegration()
+        config = get_config()
+        ai_integration = ClaudeIntegration(config.ai)
         
         # Format comments for AI
         comments_text = "\n".join([

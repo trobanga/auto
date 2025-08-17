@@ -15,7 +15,7 @@ from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command
 from auto.workflows.fetch import (
-    fetch_issue_workflow, validate_issue_access, get_issue_from_state
+    fetch_issue_workflow, fetch_issue_workflow_sync, validate_issue_access, get_issue_from_state
 )
 from auto.workflows.process import (
     process_issue_workflow, cleanup_process_workflow, validate_process_prerequisites

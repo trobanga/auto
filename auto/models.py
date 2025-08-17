@@ -263,6 +263,10 @@ class AIResponse(BaseModel):
     file_changes: List[Dict[str, str]] = Field(default_factory=list, description="Suggested file changes")
     commands: List[str] = Field(default_factory=list, description="Commands to run")
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
+    
+    # Optional fields for review responses
+    comments: Optional[List[str]] = Field(default=None, description="Review comments (for review responses)")
+    summary: Optional[str] = Field(default=None, description="Review summary (for review responses)")
 
 
 class PRMetadata(BaseModel):

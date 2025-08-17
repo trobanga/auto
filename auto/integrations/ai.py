@@ -112,7 +112,7 @@ class ClaudeIntegration:
         try:
             await self._validate_prerequisites()
             
-            prompt = self._format_review_prompt(pr_number, repository, custom_prompt)
+            prompt = await self._format_review_prompt(pr_number, repository, custom_prompt)
             
             self.logger.info(f"Running AI review for PR #{pr_number}")
             result = await self._execute_ai_command(
@@ -1724,3 +1724,14 @@ async def validate_ai_prerequisites(config: AIConfig) -> None:
     """
     integration = ClaudeIntegration(config)
     await integration._validate_prerequisites()
+
+
+__all__ = [
+    'ClaudeIntegration',
+    'AICommandResult', 
+    'AIIntegrationError',
+    'execute_ai_command',
+    'format_implementation_prompt',
+    'parse_ai_response',
+    'validate_ai_prerequisites'
+]

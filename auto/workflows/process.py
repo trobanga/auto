@@ -480,6 +480,32 @@ def validate_process_prerequisites(issue_id: str) -> list:
     except ValueError as e:
         errors.append(f"Invalid issue identifier: {e}")
         return errors
+    
+    # Check if in git repository
+    from auto.utils.shell import get_git_root
+    if get_git_root() is None:
+        errors.append("Not in a git repository")
+        return errors
+    
+    # Check GitHub authentication for GitHub issues
+    if identifier.provider.value == "github":
+        try:
+            from auto.integrations.github import validate_github_auth
+            if not validate_github_auth():
+                errors.append("GitHub CLI not authenticated or not authorized")
+        except Exception:
+            errors.append("GitHub CLI not available")
+    
+    # Check repository access
+    if identifier.provider.value == "github":
+        try:
+            repository = detect_repository()
+            if repository is None:
+                errors.append("Could not detect GitHub repository")
+        except Exception as e:
+            errors.append(f"Repository access error: {e}")
+    
+    return errors
 
 
 async def enhanced_process_issue_workflow(

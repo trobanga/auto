@@ -191,12 +191,12 @@ class TestAIReviewExecution:
             summary="Review completed with 2 issues found"
         )
         
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_ai_class, \
-             patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+        with patch('auto.workflows.review.ClaudeIntegration') as mock_ai_class, \
+             patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             
             # Setup mocks
             mock_ai = Mock()
-            mock_ai.execute_review.return_value = ai_response
+            mock_ai.execute_review = AsyncMock(return_value=ai_response)
             mock_ai_class.return_value = mock_ai
             
             mock_review = Mock()
@@ -235,10 +235,10 @@ class TestAIReviewExecution:
             max_iterations=3
         )
         
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_ai_class:
+        with patch('auto.workflows.review.ClaudeIntegration') as mock_ai_class:
             # Setup mock to fail
             mock_ai = Mock()
-            mock_ai.execute_review.side_effect = Exception("AI service unavailable")
+            mock_ai.execute_review = AsyncMock(side_effect=Exception("AI service unavailable"))
             mock_ai_class.return_value = mock_ai
             
             # Should raise ReviewWorkflowError
@@ -449,10 +449,10 @@ class TestAIUpdate:
             summary="Updated code to fix issues"
         )
         
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_ai_class:
+        with patch('auto.workflows.review.ClaudeIntegration') as mock_ai_class:
             # Setup AI integration mock
             mock_ai = Mock()
-            mock_ai.execute_update_from_review.return_value = ai_response
+            mock_ai.execute_update_from_review = AsyncMock(return_value=ai_response)
             mock_ai_class.return_value = mock_ai
             
             # Execute AI update

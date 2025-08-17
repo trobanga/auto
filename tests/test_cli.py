@@ -2,6 +2,7 @@
 
 from pathlib import Path
 import pytest
+from unittest.mock import patch, Mock
 
 from auto.cli import cli
 
@@ -102,8 +103,18 @@ class TestCLI:
         assert result.exit_code == 0
         assert "No workflows to clean up" in result.output
     
-    def test_issue_id_parsing(self, runner, temp_home):
+    @patch("auto.cli.validate_issue_access")
+    @patch("auto.cli.fetch_issue_workflow_sync")
+    def test_issue_id_parsing(self, mock_fetch_workflow, mock_validate_access, runner, temp_home):
         """Test issue ID parsing in stub commands."""
+        # Setup mocks
+        mock_validate_access.return_value = True
+        mock_state = Mock()
+        mock_state.issue = Mock()
+        mock_state.issue.title = "Test Issue"
+        mock_state.issue.url = "https://github.com/owner/repo/issues/123"
+        mock_fetch_workflow.return_value = mock_state
+        
         # Test GitHub format
         result = runner.invoke(cli, ["fetch", "#123"])
         assert result.exit_code == 0
@@ -115,6 +126,7 @@ class TestCLI:
         assert "linear" in result.output and "ENG-456" in result.output
         
         # Test invalid format
+        mock_validate_access.return_value = False
         result = runner.invoke(cli, ["fetch", "invalid"])
         assert result.exit_code == 1
         assert "Error:" in result.output

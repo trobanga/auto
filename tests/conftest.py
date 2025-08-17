@@ -142,8 +142,8 @@ def mock_ai_integration(monkeypatch):
     mock_response = AIResponse(
         success=True,
         content="Mock AI implementation completed",
-        files_changed=[],
-        commands_to_run=[],
+        file_changes=[],
+        commands=[],
         metadata={}
     )
     
