@@ -299,7 +299,7 @@ class GitWorktreeManager:
         # Make worktree base absolute if it's relative
         if not worktree_base.is_absolute():
             if git_root:
-                worktree_base = git_root.parent / worktree_base
+                worktree_base = git_root / worktree_base
             else:
                 worktree_base = Path.cwd() / worktree_base
         
@@ -307,7 +307,7 @@ class GitWorktreeManager:
         dir_name = branch_name.replace('/', '-')
         worktree_path = worktree_base / dir_name
         
-        return worktree_path
+        return worktree_path.resolve()
     
     def _handle_existing_branch(self, branch_name: str) -> None:
         """Handle existing branch conflicts.
