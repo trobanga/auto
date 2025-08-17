@@ -1,6 +1,7 @@
 """GitHub review integration for the review cycle system."""
 
 import json
+import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
@@ -9,6 +10,23 @@ from auto.utils.logger import get_logger
 from auto.utils.shell import run_command, ShellError
 
 logger = get_logger(__name__)
+
+
+def validate_github_auth() -> bool:
+    """Validate GitHub authentication for review operations."""
+    try:
+        # Check if gh CLI is authenticated
+        result = subprocess.run(
+            ["gh", "auth", "status"],
+            capture_output=True,
+            text=True,
+            check=False
+        )
+        return result.returncode == 0
+    except FileNotFoundError:
+        return False
+    except Exception:
+        return False
 
 
 class GitHubReviewError(Exception):

@@ -134,7 +134,7 @@ class ReviewCommentProcessor:
         
         # Comment analysis patterns
         self._bug_patterns = [
-            r'\b(bug|error|broken|fail|crash|exception|null pointer|undefined)\b',
+            r'\b(bug|error|broken|fail|crash|exception|null pointer|undefined|breaks)\b',
             r'\b(doesn\'t work|not working|incorrect|wrong)\b',
             r'\b(should be|expected|missing|forgot)\b'
         ]
@@ -479,35 +479,52 @@ class ReviewCommentProcessor:
         """Categorize comment based on content analysis."""
         comment_lower = comment_text.lower()
         
-        # Check for bugs first - they override other categories when functionality is broken
-        for pattern in self._bug_patterns:
-            if re.search(pattern, comment_lower, re.IGNORECASE):
-                return CommentCategory.BUG
-        
-        # Check patterns in order of specificity (most specific first)
+        # Check for security first - highest priority
         for pattern in self._security_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.SECURITY
         
-        for pattern in self._performance_patterns:
-            if re.search(pattern, comment_lower, re.IGNORECASE):
-                return CommentCategory.PERFORMANCE
+        # Check for questions first - they might contain words like "explain" that could match documentation
+        if re.search(r'\?|unclear|explain.*\?|why|how.*\?', comment_lower) or \
+           re.search(r'\b(why|how|what|where|when|can you explain|unclear)\b', comment_lower):
+            return CommentCategory.QUESTION
         
-        for pattern in self._style_patterns:
-            if re.search(pattern, comment_lower, re.IGNORECASE):
-                return CommentCategory.STYLE
+        # Check for testing early - test-related issues should be testing, not bugs
+        if re.search(r'\b(test|spec|coverage|mock)\b', comment_lower):
+            return CommentCategory.TESTING
+        
+        # Check for documentation context - override bug if clearly documentation-related  
+        has_doc_context = re.search(r'\b(readme|docs|docstring)\b', comment_lower)
+        has_doc_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._documentation_patterns)
+        if has_doc_context or (has_doc_indicators and re.search(r'\b(document|documentation)\b', comment_lower)):
+            return CommentCategory.DOCUMENTATION
+        
+        # Check for style next - style-related fixes should be style, not bugs
+        has_style_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._style_patterns)
+        if has_style_indicators:
+            return CommentCategory.STYLE
+        
+        # Check for bugs next - but only if not related to performance
+        has_bug_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._bug_patterns)
+        has_performance_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._performance_patterns)
+        
+        # If it has both bug and performance indicators, check which takes priority
+        if has_bug_indicators and has_performance_indicators:
+            # Bug takes priority if it mentions breaking functionality
+            if re.search(r'\b(break|broken|fail|crash|doesn\'t work|not working)\b|breaks functionality', comment_lower):
+                return CommentCategory.BUG
+            else:
+                return CommentCategory.PERFORMANCE
+        elif has_bug_indicators:
+            return CommentCategory.BUG
+        elif has_performance_indicators:
+            return CommentCategory.PERFORMANCE
         
         for pattern in self._documentation_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.DOCUMENTATION
         
         # Additional category detection
-        if re.search(r'\b(test|spec|coverage|mock)\b', comment_lower):
-            return CommentCategory.TESTING
-        
-        
-        if re.search(r'\?|unclear|explain|why|how', comment_lower):
-            return CommentCategory.QUESTION
         
         if re.search(r'\b(nit|nitpick|minor|tiny)\b', comment_lower):
             return CommentCategory.NITPICK
@@ -601,12 +618,20 @@ class ReviewCommentProcessor:
             return True
         
         comment_lower = comment_text.lower()
-        change_indicators = [
-            'fix', 'change', 'update', 'modify', 'refactor', 'remove', 'add',
-            'implement', 'replace', 'correct', 'adjust'
+        
+        # Check for positive/praise contexts first
+        positive_contexts = ['great', 'good', 'nice', 'excellent', 'perfect', 'well done', 'looks good', 'clean']
+        if any(positive in comment_lower for positive in positive_contexts):
+            return False
+        
+        # Directive change indicators with word boundaries
+        change_patterns = [
+            r'\bfix\b', r'\bchange\b', r'\bupdate\b', r'\bmodify\b', r'\brefactor\b', 
+            r'\bremove\b', r'\badd\b', r'\breplace\b', r'\bcorrect\b', r'\badjust\b',
+            r'\bshould.*(?:fix|change|update|modify|refactor|remove|add|replace)\b'
         ]
         
-        return any(word in comment_lower for word in change_indicators)
+        return any(re.search(pattern, comment_lower) for pattern in change_patterns)
 
     def _extract_suggested_change(self, comment_text: str) -> Optional[str]:
         """Extract suggested code change from comment."""
@@ -913,15 +938,18 @@ Keep the response professional, concise, and constructive."""
         """Extract implementation details from AI response."""
         # Look for implementation-specific content
         impl_patterns = [
-            r'(?:implementation|approach|method):\s*([^.]+)',
-            r'(?:technically|specifically|details):\s*([^.]+)',
-            r'(?:by|through|using)\s+([^.]+)'
+            r'(?:implementation|approach|method):\s*([^.\n]+)',
+            r'(?:technically|specifically|details)[,:]?\s*([^.\n]+)',
+            r'(?:by|through|using)\s+([^.\n]+)',
+            r'(?:will be to|pattern[,:])\s*([^.\n]+)'
         ]
         
         for pattern in impl_patterns:
             match = re.search(pattern, response_text, re.IGNORECASE)
             if match:
-                return match.group(1).strip()
+                extracted = match.group(1).strip()
+                if len(extracted) > 3:  # Ensure meaningful content
+                    return extracted
         
         return None
 

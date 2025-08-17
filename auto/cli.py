@@ -485,7 +485,7 @@ def cleanup(force: bool, verbose: bool) -> None:
 def fetch(issue_id: str, verbose: bool) -> None:
     """Fetch issue details and create workflow state."""
     try:
-        from auto.workflows import fetch_issue_workflow_sync, validate_issue_access, FetchWorkflowError
+        from auto.workflows.fetch import FetchWorkflowError
         
         # Parse and validate issue identifier
         identifier = IssueIdentifier.parse(issue_id)

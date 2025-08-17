@@ -86,6 +86,7 @@ class TestRepositoryDetection:
             ShellResult(0, "git@github.com:owner/repo.git", "", "git remote get-url origin"),
             ShellResult(1, "", "error", "git symbolic-ref refs/remotes/origin/HEAD"),
             ShellResult(0, "main", "", "git ls-remote --heads origin main"),
+            ShellResult(1, "", "error", "git ls-remote --heads origin master"),
         ]
         
         repo = detect_repository()
