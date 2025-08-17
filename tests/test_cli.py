@@ -1,28 +1,13 @@
 """Tests for CLI interface."""
 
-import tempfile
 from pathlib import Path
 import pytest
-from click.testing import CliRunner
 
 from auto.cli import cli
 
 
 class TestCLI:
     """Test CLI functionality."""
-    
-    @pytest.fixture
-    def runner(self):
-        """Create CLI test runner."""
-        return CliRunner()
-    
-    @pytest.fixture
-    def temp_home(self, monkeypatch):
-        """Mock home directory for tests."""
-        with tempfile.TemporaryDirectory() as temp_dir:
-            temp_path = Path(temp_dir)
-            monkeypatch.setattr(Path, "home", lambda: temp_path)
-            yield temp_path
     
     def test_version_flag(self, runner):
         """Test --version flag."""
@@ -37,12 +22,8 @@ class TestCLI:
         assert "Automatic User Task Orchestrator" in result.output
         assert "Commands:" in result.output
     
-    def test_init_command(self, runner, temp_home, monkeypatch):
+    def test_init_command(self, runner, temp_home, isolated_config_manager):
         """Test init command."""
-        # Ensure no existing config affects test
-        from auto.config import config_manager
-        config_manager._config = None
-        
         result = runner.invoke(cli, ["init"])
         assert result.exit_code == 0
         assert "configuration initialized" in result.output
@@ -51,11 +32,10 @@ class TestCLI:
         config_path = temp_home / ".auto" / "config.yaml"
         assert config_path.exists()
     
-    def test_init_project_flag(self, runner, temp_home, monkeypatch):
+    def test_init_project_flag(self, runner, temp_home, mock_git_root, monkeypatch):
         """Test init command with --project flag."""
         # Mock current directory
-        cwd = temp_home / "project"
-        cwd.mkdir()
+        cwd = mock_git_root
         monkeypatch.chdir(cwd)
         
         result = runner.invoke(cli, ["init", "--project"])
@@ -127,20 +107,14 @@ class TestCLI:
         assert result.exit_code == 1
         assert "Error:" in result.output
     
-    def test_run_command_with_state_creation(self, runner, temp_home, monkeypatch):
+    def test_run_command_with_state_creation(self, runner, mock_git_root, monkeypatch):
         """Test run command creates workflow state."""
         # Mock current directory with git root
-        cwd = temp_home / "project"
-        cwd.mkdir()
-        monkeypatch.chdir(cwd)
-        
-        # Mock git root detection
-        from auto.utils import shell
-        monkeypatch.setattr(shell, "get_git_root", lambda: cwd)
+        monkeypatch.chdir(mock_git_root)
         
         # Ensure fresh core instance for test
         from auto.core import core
-        core.state_dir = cwd / ".auto" / "state"
+        core.state_dir = mock_git_root / ".auto" / "state"
         core.state_dir.mkdir(parents=True, exist_ok=True)
         
         result = runner.invoke(cli, ["run", "ENG-123"])
@@ -148,7 +122,7 @@ class TestCLI:
         assert "Created workflow state for ENG-123" in result.output
         
         # Verify state file was created
-        state_file = cwd / ".auto" / "state" / "ENG-123.yaml"
+        state_file = mock_git_root / ".auto" / "state" / "ENG-123.yaml"
         assert state_file.exists()
     
     def test_verbose_flag(self, runner, temp_home):
