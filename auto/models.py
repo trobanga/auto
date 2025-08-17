@@ -320,6 +320,7 @@ class AIConfig(BaseModel):
     """AI configuration settings."""
     
     command: str = Field(default="claude", description="AI command")
+    command_format: str = Field(default="claude", description="AI command format (claude|openai|ollama|custom)")
     implementation_agent: str = Field(default="coder", description="Implementation agent")
     review_agent: str = Field(default="pull-request-reviewer", description="Review agent")
     update_agent: str = Field(default="coder", description="Update agent")
@@ -339,6 +340,9 @@ class AIConfig(BaseModel):
     max_retries: int = Field(default=2, description="Maximum retries for failed commands")
     include_file_context: bool = Field(default=True, description="Include relevant file content in prompts")
     response_format: str = Field(default="structured", description="structured|freeform")
+    
+    # Command format support
+    command_template: Optional[str] = Field(default=None, description="Custom command template for 'custom' format")
     
     # Custom prompt support
     prompt_templates_dir: str = Field(default="~/.auto/prompts", description="User prompt templates directory")

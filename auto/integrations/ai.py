@@ -7,12 +7,10 @@ Includes agent selection, prompt formatting, response parsing, and error handlin
 
 import asyncio
 import json
-import logging
 import subprocess
-import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional
 from ..models import Issue, AIConfig, AIResponse
 from ..utils.logger import get_logger
 
@@ -183,6 +181,91 @@ class ClaudeIntegration:
             self.logger.error(f"AI update failed for issue {issue.id}: {e}")
             raise
 
+    def _build_ai_command(self, prompt: str, agent: Optional[str] = None) -> List[str]:
+        """
+        Build AI command based on configured format.
+        
+        Args:
+            prompt: The prompt to send to the AI
+            agent: Optional agent name
+            
+        Returns:
+            List of command arguments ready for execution
+        """
+        command_format = getattr(self.config, 'command_format', 'claude')
+        
+        if command_format == "claude":
+            # Claude Code style: agent invocation in prompt, use -p flag
+            if agent:
+                prompt = f"agent-{agent}, {prompt}"
+            return [self.command, "-p", prompt]
+        
+        elif command_format == "openai":
+            # OpenAI CLI style (hypothetical example)
+            cmd = [self.command]
+            if agent:
+                cmd.extend(["--model", agent])
+            cmd.extend(["--prompt", prompt])
+            return cmd
+        
+        elif command_format == "ollama":
+            # Ollama style (hypothetical example)
+            cmd = [self.command, "run"]
+            if agent:
+                cmd.append(agent)
+            else:
+                cmd.append("llama2")  # default model
+            cmd.append(prompt)
+            return cmd
+        
+        elif command_format == "custom":
+            # User-defined template from config
+            template = getattr(self.config, 'command_template', None)
+            if template:
+                return self._parse_custom_template(template, prompt, agent)
+            else:
+                self.logger.warning("Custom command format specified but no command_template provided, falling back to legacy")
+                return self._build_legacy_command(prompt, agent)
+        
+        else:
+            # Default/legacy behavior for backward compatibility
+            return self._build_legacy_command(prompt, agent)
+    
+    def _build_legacy_command(self, prompt: str, agent: Optional[str] = None) -> List[str]:
+        """Build command using legacy format for backward compatibility."""
+        cmd = [self.command]
+        if agent:
+            cmd.extend(["--agent", agent])
+        cmd.append(prompt)
+        return cmd
+    
+    def _parse_custom_template(self, template: str, prompt: str, agent: Optional[str] = None) -> List[str]:
+        """
+        Parse custom command template.
+        
+        Template variables:
+        - {command}: The AI command
+        - {agent}: The agent name (if provided)
+        - {prompt}: The prompt text
+        
+        Example: "{command} -p \"agent-{agent}, {prompt}\""
+        """
+        # Replace template variables
+        formatted = template.format(
+            command=self.command,
+            agent=agent or "",
+            prompt=prompt
+        )
+        
+        # Simple parsing - split by spaces but respect quoted strings
+        import shlex
+        try:
+            return shlex.split(formatted)
+        except ValueError as e:
+            self.logger.error(f"Failed to parse custom command template: {e}")
+            # Fallback to legacy format
+            return self._build_legacy_command(prompt, agent)
+
     async def _execute_ai_command(
         self,
         prompt: str,
@@ -204,15 +287,8 @@ class ClaudeIntegration:
         start_time = time.time()
         
         try:
-            # Build command
-            cmd = [self.command]
-            
-            # Add agent if specified
-            if agent:
-                cmd.extend(["--agent", agent])
-            
-            # Add prompt
-            cmd.append(prompt)
+            # Build command using flexible command builder
+            cmd = self._build_ai_command(prompt, agent)
             
             self.logger.debug(f"Executing AI command: {' '.join(cmd[:3])}... (prompt truncated)")
             
