@@ -5,17 +5,20 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from auto.workflows.merge import (
-    MergeConflictError,
+from auto.workflows.merge import execute_auto_merge
+from auto.workflows.merge_cleanup import cleanup_after_merge
+from auto.workflows.merge_conflicts import MergeConflictError, handle_merge_conflicts
+from auto.workflows.merge_execution import execute_merge as _execute_merge
+from auto.workflows.merge_validation import (
     MergeValidationError,
-    _execute_merge,
     _get_pr_info,
-    _validate_reviews,
-    _validate_status_checks,
-    cleanup_after_merge,
-    execute_auto_merge,
-    handle_merge_conflicts,
     validate_merge_eligibility,
+)
+from auto.workflows.merge_validation import (
+    validate_reviews as _validate_reviews,
+)
+from auto.workflows.merge_validation import (
+    validate_status_checks as _validate_status_checks,
 )
 
 
@@ -35,7 +38,7 @@ class TestMergeAutomation:
         """Mock PR information."""
         return {
             "state": "open",
-            "draft": False,
+            "isDraft": False,
             "mergeable": True,
             "reviews": [
                 {"state": "APPROVED", "user": {"login": "reviewer1"}},
@@ -50,11 +53,9 @@ class TestMergeAutomation:
     async def test_execute_auto_merge_success(self, mock_config, mock_pr_info):
         """Test successful automated merge."""
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
             patch("auto.workflows.merge.validate_merge_eligibility") as mock_validate,
             patch("auto.workflows.merge.handle_merge_conflicts") as mock_conflicts,
-            patch("auto.workflows.merge._execute_merge") as mock_execute,
+            patch("auto.workflows.merge.execute_merge") as mock_execute,
             patch("auto.workflows.merge.cleanup_after_merge") as mock_cleanup,
         ):
             # Setup mocks
@@ -70,14 +71,12 @@ class TestMergeAutomation:
             assert result is True
             mock_validate.assert_called_once_with(123, "owner", "repo", False)
             mock_conflicts.assert_called_once_with(123, "owner", "repo")
-            mock_execute.assert_called_once_with(123, "owner", "repo", "merge")
+            mock_execute.assert_called_once_with(123, "owner", "repo")
 
     @pytest.mark.asyncio
     async def test_execute_auto_merge_validation_failure(self, mock_config):
         """Test merge with validation failure."""
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
             patch("auto.workflows.merge.validate_merge_eligibility") as mock_validate,
         ):
             # Setup validation failure
@@ -93,8 +92,6 @@ class TestMergeAutomation:
     async def test_execute_auto_merge_conflicts(self, mock_config):
         """Test merge with conflicts."""
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
             patch("auto.workflows.merge.validate_merge_eligibility") as mock_validate,
             patch("auto.workflows.merge.handle_merge_conflicts") as mock_conflicts,
         ):
@@ -112,11 +109,9 @@ class TestMergeAutomation:
     async def test_execute_auto_merge_force_override(self, mock_config):
         """Test merge with force override."""
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
             patch("auto.workflows.merge.validate_merge_eligibility") as mock_validate,
             patch("auto.workflows.merge.handle_merge_conflicts") as mock_conflicts,
-            patch("auto.workflows.merge._execute_merge") as mock_execute,
+            patch("auto.workflows.merge.execute_merge") as mock_execute,
         ):
             # Setup mocks
             mock_validate.return_value = (True, [])  # Force should make validation pass
@@ -134,13 +129,17 @@ class TestMergeAutomation:
     async def test_validate_merge_eligibility_success(self, mock_pr_info):
         """Test successful merge eligibility validation."""
         with (
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._validate_reviews") as mock_reviews,
-            patch("auto.workflows.merge._validate_status_checks") as mock_checks,
-            patch("auto.workflows.merge._validate_branch_protection") as mock_protection,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_validation.validate_reviews") as mock_reviews,
+            patch("auto.workflows.merge_validation.validate_status_checks") as mock_checks,
+            patch("auto.workflows.merge_validation.validate_branch_protection") as mock_protection,
         ):
             # Setup mocks
-            mock_reviews.return_value = (True, [])
+            from auto.models import ValidationResult
+
+            mock_reviews.return_value = ValidationResult(
+                success=True, message="Reviews OK", details={}, actionable_items=[]
+            )
             mock_checks.return_value = (True, [])
             mock_protection.return_value = (True, [])
 
@@ -154,16 +153,20 @@ class TestMergeAutomation:
     @pytest.mark.asyncio
     async def test_validate_merge_eligibility_draft_pr(self, mock_pr_info):
         """Test validation failure for draft PR."""
-        mock_pr_info["draft"] = True
+        mock_pr_info["isDraft"] = True
 
         with (
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._validate_reviews") as mock_reviews,
-            patch("auto.workflows.merge._validate_status_checks") as mock_checks,
-            patch("auto.workflows.merge._validate_branch_protection") as mock_protection,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_validation.validate_reviews") as mock_reviews,
+            patch("auto.workflows.merge_validation.validate_status_checks") as mock_checks,
+            patch("auto.workflows.merge_validation.validate_branch_protection") as mock_protection,
         ):
             # Setup mocks
-            mock_reviews.return_value = (True, [])
+            from auto.models import ValidationResult
+
+            mock_reviews.return_value = ValidationResult(
+                success=True, message="Reviews OK", details={}, actionable_items=[]
+            )
             mock_checks.return_value = (True, [])
             mock_protection.return_value = (True, [])
 
@@ -180,13 +183,17 @@ class TestMergeAutomation:
         mock_pr_info["mergeable"] = False
 
         with (
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._validate_reviews") as mock_reviews,
-            patch("auto.workflows.merge._validate_status_checks") as mock_checks,
-            patch("auto.workflows.merge._validate_branch_protection") as mock_protection,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_validation.validate_reviews") as mock_reviews,
+            patch("auto.workflows.merge_validation.validate_status_checks") as mock_checks,
+            patch("auto.workflows.merge_validation.validate_branch_protection") as mock_protection,
         ):
             # Setup mocks
-            mock_reviews.return_value = (True, [])
+            from auto.models import ValidationResult
+
+            mock_reviews.return_value = ValidationResult(
+                success=True, message="Reviews OK", details={}, actionable_items=[]
+            )
             mock_checks.return_value = (True, [])
             mock_protection.return_value = (True, [])
 
@@ -202,32 +209,30 @@ class TestMergeAutomation:
         """Test successful post-merge cleanup."""
         worktree_path = Path("/test/worktree")
 
+        # Mock successful git command result
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+
         with (
-            patch("auto.workflows.merge.GitIntegration") as mock_git_class,
-            patch("auto.workflows.merge._update_issue_status_after_merge") as mock_update,
-            patch("auto.workflows.merge._cleanup_temporary_files") as mock_cleanup,
+            patch(
+                "auto.workflows.merge_cleanup.run_command_async", return_value=mock_result
+            ) as mock_run_command,
+            patch("auto.workflows.merge_cleanup.update_issue_status_after_merge") as mock_update,
+            patch("auto.workflows.merge_cleanup.cleanup_temporary_files") as mock_cleanup,
             patch("pathlib.Path.exists", return_value=True),  # Mock path exists
         ):
-            mock_git = MagicMock()
-            mock_git.remove_worktree = MagicMock()  # Not async
-            mock_git_class.return_value = mock_git
-
             # Execute
             await cleanup_after_merge(worktree_path, "owner", "repo")
 
-            # Assert - function calls remove_worktree with WorktreeInfo, not path directly
-            mock_git.remove_worktree.assert_called_once()
-            call_args = mock_git.remove_worktree.call_args[0][0]  # Get first argument
-            assert call_args.path == str(worktree_path)
-            assert call_args.branch == "worktree"  # Last component of path
-
+            # Assert git worktree remove was called
+            mock_run_command.assert_called_once_with(f"git worktree remove {worktree_path}")
             mock_update.assert_called_once_with("owner", "repo")
             mock_cleanup.assert_called_once_with(worktree_path)
 
     @pytest.mark.asyncio
     async def test_handle_merge_conflicts_no_conflicts(self, mock_pr_info):
         """Test conflict detection with no conflicts."""
-        with patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info):
+        with patch("auto.workflows.merge_conflicts._get_pr_info", return_value=mock_pr_info):
             # Execute
             conflicts = await handle_merge_conflicts(123, "owner", "repo")
 
@@ -240,8 +245,8 @@ class TestMergeAutomation:
         mock_pr_info["mergeable"] = False
 
         with (
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._get_conflict_details") as mock_details,
+            patch("auto.workflows.merge_conflicts._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_conflicts.get_conflict_details") as mock_details,
         ):
             mock_details.return_value = ["Conflict in file.py", "Conflict in other.py"]
 
@@ -263,8 +268,10 @@ class TestMergeHelperFunctions:
         mock_result.stdout = "Merged successfully"
 
         with (
-            patch("auto.workflows.merge.run_command", return_value=mock_result) as mock_run,
-            patch("auto.workflows.merge.get_config") as mock_config,
+            patch(
+                "auto.workflows.merge_execution.run_command", return_value=mock_result
+            ) as mock_run,
+            patch("auto.workflows.merge_execution.get_config") as mock_config,
         ):
             config = MagicMock()
             config.defaults.delete_branch_on_merge = True
@@ -292,8 +299,8 @@ class TestMergeHelperFunctions:
         mock_result.stderr = "Merge failed"
 
         with (
-            patch("auto.workflows.merge.run_command", return_value=mock_result),
-            patch("auto.workflows.merge.get_config") as mock_config,
+            patch("auto.workflows.merge_execution.run_command", return_value=mock_result),
+            patch("auto.workflows.merge_execution.get_config") as mock_config,
         ):
             config = MagicMock()
             config.defaults.delete_branch_on_merge = False
@@ -313,7 +320,7 @@ class TestMergeHelperFunctions:
         mock_result.returncode = 0
         mock_result.stdout = '{"state": "open", "mergeable": true}'
 
-        with patch("auto.workflows.merge.run_command", return_value=mock_result):
+        with patch("auto.workflows.merge_validation.run_command", return_value=mock_result):
             # Execute
             pr_info = await _get_pr_info(123, "owner", "repo")
 
@@ -328,7 +335,7 @@ class TestMergeHelperFunctions:
         mock_result.returncode = 1
         mock_result.stderr = "PR not found"
 
-        with patch("auto.workflows.merge.run_command", return_value=mock_result):
+        with patch("auto.workflows.merge_validation.run_command", return_value=mock_result):
             # Execute
             pr_info = await _get_pr_info(123, "owner", "repo")
 
@@ -345,13 +352,38 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
-            # Execute
-            is_valid, errors = await _validate_reviews(123, "owner", "repo")
+        with (
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch(
+                "auto.workflows.merge_validation.GitHubReviewIntegration"
+            ) as mock_integration_class,
+        ):
+            # Mock the integration instance
+            from datetime import datetime
+
+            from auto.integrations.review import PRReview
+
+            mock_integration = mock_integration_class.return_value
+            mock_integration.get_pr_reviews.return_value = [
+                PRReview(
+                    id=1,
+                    state="APPROVED",
+                    body="LGTM",
+                    author="reviewer1",
+                    submitted_at=datetime.now(),
+                )
+            ]
+
+            # Execute - need to create mock repository and config
+            from auto.models import Config, GitHubRepository
+
+            repository = GitHubRepository(owner="owner", name="repo")
+            config = Config()
+            result = await _validate_reviews(123, repository, config)
 
             # Assert
-            assert is_valid is True
-            assert errors == []
+            assert result.success is True
+            assert result.actionable_items == []
 
     @pytest.mark.asyncio
     async def test_validate_reviews_no_approvals(self):
@@ -362,13 +394,38 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
-            # Execute
-            is_valid, errors = await _validate_reviews(123, "owner", "repo")
+        with (
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch(
+                "auto.workflows.merge_validation.GitHubReviewIntegration"
+            ) as mock_integration_class,
+        ):
+            # Mock the integration instance
+            from datetime import datetime
+
+            from auto.integrations.review import PRReview
+
+            mock_integration = mock_integration_class.return_value
+            mock_integration.get_pr_reviews.return_value = [
+                PRReview(
+                    id=1,
+                    state="COMMENTED",
+                    body="Comment",
+                    author="reviewer1",
+                    submitted_at=datetime.now(),
+                )
+            ]
+
+            # Execute - need to create mock repository and config
+            from auto.models import Config, GitHubRepository
+
+            repository = GitHubRepository(owner="owner", name="repo")
+            config = Config()
+            result = await _validate_reviews(123, repository, config)
 
             # Assert
-            assert is_valid is False
-            assert "No approving reviews found" in errors
+            assert result.success is False
+            assert "more approval(s)" in result.message
 
     @pytest.mark.asyncio
     async def test_validate_reviews_change_requests(self):
@@ -380,13 +437,45 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
-            # Execute
-            is_valid, errors = await _validate_reviews(123, "owner", "repo")
+        with (
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch(
+                "auto.workflows.merge_validation.GitHubReviewIntegration"
+            ) as mock_integration_class,
+        ):
+            # Mock the integration instance
+            from datetime import datetime
+
+            from auto.integrations.review import PRReview
+
+            mock_integration = mock_integration_class.return_value
+            mock_integration.get_pr_reviews.return_value = [
+                PRReview(
+                    id=1,
+                    state="APPROVED",
+                    body="LGTM",
+                    author="reviewer1",
+                    submitted_at=datetime.now(),
+                ),
+                PRReview(
+                    id=2,
+                    state="CHANGES_REQUESTED",
+                    body="Please fix",
+                    author="reviewer2",
+                    submitted_at=datetime.now(),
+                ),
+            ]
+
+            # Execute - need to create mock repository and config
+            from auto.models import Config, GitHubRepository
+
+            repository = GitHubRepository(owner="owner", name="repo")
+            config = Config()
+            result = await _validate_reviews(123, repository, config)
 
             # Assert
-            assert is_valid is False
-            assert "1 unresolved change requests" in errors
+            assert result.success is False
+            assert "requested changes" in result.message
 
     @pytest.mark.asyncio
     async def test_validate_status_checks_success(self):
@@ -398,7 +487,7 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
+        with patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info):
             # Execute
             is_valid, errors = await _validate_status_checks(123, "owner", "repo")
 
@@ -417,7 +506,7 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
+        with patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info):
             # Execute
             is_valid, errors = await _validate_status_checks(123, "owner", "repo")
 
@@ -435,7 +524,7 @@ class TestMergeHelperFunctions:
             ]
         }
 
-        with patch("auto.workflows.merge._get_pr_info", return_value=pr_info):
+        with patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info):
             # Execute
             is_valid, errors = await _validate_status_checks(123, "owner", "repo")
 
@@ -470,15 +559,24 @@ class TestMergeIntegration:
         mock_merge_result.returncode = 0
 
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._validate_reviews", return_value=(True, [])),
-            patch("auto.workflows.merge._validate_status_checks", return_value=(True, [])),
-            patch("auto.workflows.merge._validate_branch_protection", return_value=(True, [])),
-            patch("auto.workflows.merge.run_command", return_value=mock_merge_result),
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_validation.validate_reviews") as mock_validate_reviews,
+            patch(
+                "auto.workflows.merge_validation.validate_status_checks", return_value=(True, [])
+            ),
+            patch(
+                "auto.workflows.merge_validation.validate_branch_protection",
+                return_value=(True, []),
+            ),
+            patch("auto.workflows.merge_execution.run_command", return_value=mock_merge_result),
+            patch("auto.workflows.merge_execution.get_config", return_value=mock_config),
             patch("auto.workflows.merge.cleanup_after_merge") as mock_cleanup,
         ):
+            from auto.models import ValidationResult
+
+            mock_validate_reviews.return_value = ValidationResult(
+                success=True, message="Validation passed", details={}, actionable_items=[]
+            )
             # Execute full workflow
             result = await execute_auto_merge(
                 pr_number=123, owner="test-owner", repo="test-repo", worktree_path=worktree_path
@@ -496,7 +594,7 @@ class TestMergeIntegration:
 
         mock_pr_info = {
             "state": "open",
-            "draft": True,  # Draft PR
+            "isDraft": True,  # Draft PR
             "mergeable": False,  # Has conflicts
             "reviews": [],  # No reviews
             "statusCheckRollup": [{"state": "FAILURE", "name": "ci"}],  # Failing checks
@@ -504,16 +602,22 @@ class TestMergeIntegration:
         }
 
         with (
-            patch("auto.workflows.merge.GitHubIntegration"),
-            patch("auto.workflows.merge.get_config", return_value=mock_config),
-            patch("auto.workflows.merge._get_pr_info", return_value=mock_pr_info),
-            patch("auto.workflows.merge._validate_reviews", return_value=(False, ["No approvals"])),
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=mock_pr_info),
+            patch("auto.workflows.merge_validation.validate_reviews") as mock_validate_reviews2,
             patch(
-                "auto.workflows.merge._validate_status_checks",
+                "auto.workflows.merge_validation.validate_status_checks",
                 return_value=(False, ["Failing checks"]),
             ),
-            patch("auto.workflows.merge._validate_branch_protection", return_value=(True, [])),
+            patch(
+                "auto.workflows.merge_validation.validate_branch_protection",
+                return_value=(True, []),
+            ),
         ):
+            from auto.models import ValidationResult
+
+            mock_validate_reviews2.return_value = ValidationResult(
+                success=False, message="No approvals", details={}, actionable_items=["Get approval"]
+            )
             # Execute and expect validation failure
             with pytest.raises(MergeValidationError) as exc_info:
                 await execute_auto_merge(123, "owner", "repo")
