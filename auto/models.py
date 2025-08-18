@@ -390,6 +390,84 @@ class AIConfig(BaseModel):
         ],
         description="Available template variables"
     )
+    
+    @field_validator("command")
+    @classmethod
+    def validate_command(cls, v: str) -> str:
+        """Validate AI command is not empty."""
+        if not v or not v.strip():
+            raise ValueError("AI command cannot be empty")
+        return v.strip()
+    
+    @field_validator("command_format")
+    @classmethod
+    def validate_command_format(cls, v: str) -> str:
+        """Validate command format."""
+        valid_formats = {"claude", "openai", "ollama", "custom"}
+        if v not in valid_formats:
+            raise ValueError(f"Invalid command format: {v}. Must be one of {valid_formats}")
+        return v
+    
+    @field_validator("stale_timeout")
+    @classmethod
+    def validate_stale_timeout(cls, v: int) -> int:
+        """Validate stale timeout is reasonable."""
+        if v < 0:
+            raise ValueError("Stale timeout cannot be negative (use 0 to disable)")
+        if v > 3600:
+            raise ValueError("Stale timeout cannot exceed 1 hour (3600 seconds)")
+        return v
+    
+    @field_validator("max_retries")
+    @classmethod
+    def validate_max_retries(cls, v: int) -> int:
+        """Validate max retries is reasonable."""
+        if v < 0:
+            raise ValueError("Max retries cannot be negative")
+        if v > 10:
+            raise ValueError("Max retries cannot exceed 10")
+        return v
+    
+    @field_validator("output_format")
+    @classmethod
+    def validate_output_format(cls, v: str) -> str:
+        """Validate output format."""
+        valid_formats = {"stream-json", "text", "json"}
+        if v not in valid_formats:
+            raise ValueError(f"Invalid output format: {v}. Must be one of {valid_formats}")
+        return v
+    
+    @field_validator("response_format")
+    @classmethod
+    def validate_response_format(cls, v: str) -> str:
+        """Validate response format."""
+        valid_formats = {"structured", "freeform"}
+        if v not in valid_formats:
+            raise ValueError(f"Invalid response format: {v}. Must be one of {valid_formats}")
+        return v
+    
+    @field_validator("implementation_agent", "review_agent", "update_agent")
+    @classmethod
+    def validate_agent_names(cls, v: str) -> str:
+        """Validate agent names are not empty."""
+        if not v or not v.strip():
+            raise ValueError("Agent name cannot be empty")
+        return v.strip()
+    
+    @field_validator("implementation_prompt", "review_prompt", "update_prompt")
+    @classmethod
+    def validate_prompts(cls, v: str) -> str:
+        """Validate prompts are not empty."""
+        if not v or not v.strip():
+            raise ValueError("Prompt template cannot be empty")
+        return v.strip()
+    
+    @model_validator(mode='after')
+    def validate_custom_command_template(self) -> 'AIConfig':
+        """Validate custom command template when format is custom."""
+        if self.command_format == "custom" and not self.command_template:
+            raise ValueError("command_template is required when command_format is 'custom'")
+        return self
 
 
 class WorkflowsConfig(BaseModel):
@@ -401,6 +479,7 @@ class WorkflowsConfig(BaseModel):
     require_human_approval: bool = Field(default=True, description="Require human approval")
     test_command: Optional[str] = Field(default=None, description="Test command")
     review_check_interval: int = Field(default=60, description="Review check interval (seconds)")
+    max_review_iterations: int = Field(default=10, description="Maximum review iterations")
     worktree_cleanup_on_merge: bool = Field(default=True, description="Auto-cleanup merged worktrees")
     worktree_conflict_resolution: str = Field(default="prompt", description="prompt|force|skip")
     auto_create_pr: bool = Field(default=True, description="Auto-create PR after implementation")
@@ -414,10 +493,20 @@ class WorkflowsConfig(BaseModel):
     @classmethod
     def validate_review_check_interval(cls, v: int) -> int:
         """Validate review check interval is reasonable."""
-        if v < 10:
-            raise ValueError("Review check interval must be at least 10 seconds")
+        if v < 1:
+            raise ValueError("Review check interval must be at least 1 second")
         if v > 3600:
             raise ValueError("Review check interval must be at most 1 hour (3600 seconds)")
+        return v
+    
+    @field_validator("max_review_iterations")
+    @classmethod
+    def validate_max_review_iterations(cls, v: int) -> int:
+        """Validate max review iterations is reasonable."""
+        if v < 1:
+            raise ValueError("Max review iterations must be at least 1")
+        if v > 50:
+            raise ValueError("Max review iterations must be at most 50 (to prevent infinite loops)")
         return v
     
     @field_validator("worktree_conflict_resolution")
@@ -427,6 +516,36 @@ class WorkflowsConfig(BaseModel):
         valid_strategies = {"prompt", "force", "skip"}
         if v not in valid_strategies:
             raise ValueError(f"Invalid conflict resolution strategy: {v}. Must be one of {valid_strategies}")
+        return v
+    
+    @field_validator("branch_naming")
+    @classmethod
+    def validate_branch_naming(cls, v: str) -> str:
+        """Validate branch naming pattern."""
+        if not v or not isinstance(v, str):
+            raise ValueError("Branch naming pattern cannot be empty")
+        
+        # Check for required placeholders
+        required_placeholders = ["{id}"]
+        for placeholder in required_placeholders:
+            if placeholder not in v:
+                raise ValueError(f"Branch naming pattern must contain {placeholder}")
+        
+        # Check for invalid characters
+        invalid_chars = [":", "~", "^", "?", "*", "[", "\\", " "]
+        for char in invalid_chars:
+            if char in v:
+                raise ValueError(f"Branch naming pattern contains invalid character: '{char}'")
+        
+        return v
+    
+    @field_validator("commit_convention")
+    @classmethod
+    def validate_commit_convention(cls, v: str) -> str:
+        """Validate commit convention."""
+        valid_conventions = {"conventional", "angular", "gitmoji", "custom"}
+        if v not in valid_conventions:
+            raise ValueError(f"Invalid commit convention: {v}. Must be one of {valid_conventions}")
         return v
 
 
