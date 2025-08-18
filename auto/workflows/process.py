@@ -295,9 +295,36 @@ def process_issue_workflow(
         else:
             logger.info("PR creation step skipped")
         
+        # Review Cycle Initiation (after successful PR creation)
+        if state.pr_number and config.workflows.ai_review_first:
+            logger.info("Initiating review cycle for created PR")
+            try:
+                from auto.workflows.review import initiate_review_cycle
+                
+                # Update workflow status to in_review
+                state.update_status(WorkflowStatus.IN_REVIEW)
+                core.save_workflow_state(state)
+                
+                # Start the review cycle asynchronously
+                asyncio.run(initiate_review_cycle(
+                    pr_number=state.pr_number,
+                    owner=state.repository.owner if state.repository else "",
+                    repo=state.repository.name if state.repository else "",
+                    workflow_state=state
+                ))
+                
+                logger.info(f"Review cycle initiated for PR #{state.pr_number}")
+                
+            except Exception as e:
+                logger.warning(f"Failed to initiate review cycle: {e}")
+                # Don't fail the whole workflow if review cycle initiation fails
+                # Just log the warning and continue
+        
         logger.info(f"Successfully processed issue {issue.id}")
         if state.pr_number:
             logger.info(f"PR created: #{state.pr_number}")
+            if config.workflows.ai_review_first:
+                logger.info("Review cycle has been initiated")
         
         return state
         
