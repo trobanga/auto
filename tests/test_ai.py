@@ -167,11 +167,82 @@ class TestClaudeIntegration:
             assert result.duration > 0
 
     @pytest.mark.anyio
-    @pytest.mark.skip(reason="Timeout handling test needs complex mock setup - skip for now")
-    async def test_execute_ai_command_timeout(self, claude_integration):
+    async def test_execute_ai_command_timeout(self, ai_config):
         """Test AI command timeout handling."""
-        # This test is complex to mock properly - skip for now
-        pass
+        # Configure a short stale timeout and enable activity monitoring
+        ai_config.stale_timeout = 1  # 1 second timeout
+        ai_config.enable_activity_monitoring = True
+        integration = ClaudeIntegration(ai_config)
+        
+        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+            # Create a mock process that produces initial output then hangs
+            mock_process = AsyncMock()
+            mock_process.returncode = None  # Process is still running
+            mock_process.pid = 12345
+            
+            # Mock stdout that produces some initial output then stops
+            initial_output = b"Starting AI processing...\n"
+            mock_process.stdout = AsyncMock()
+            
+            # Configure readline to return initial output once, then hang
+            mock_readline_calls = [
+                initial_output,  # First call returns initial output
+                # Subsequent calls will hang (timeout) - this simulates stale process
+            ]
+            mock_process.stdout.readline.side_effect = mock_readline_calls
+            
+            # Mock stderr (no error output)
+            mock_process.stderr = AsyncMock()
+            mock_process.stderr.readline.side_effect = [asyncio.TimeoutError] * 10  # Always timeout
+            
+            # Mock the process.wait() method
+            async def mock_wait():
+                # Simulate process being killed
+                mock_process.returncode = -1
+                return -1
+            mock_process.wait = mock_wait
+            
+            # Mock process.kill() method
+            mock_process.kill = MagicMock()
+            
+            # Mock read methods for final cleanup
+            mock_process.stdout.read.return_value = b""
+            mock_process.stderr.read.return_value = b""
+            
+            mock_create_proc.return_value = mock_process
+            
+            # Patch time.time to control timeout behavior
+            with patch('time.time') as mock_time:
+                start_time = 1000.0
+                current_time = start_time
+                
+                def mock_time_func():
+                    nonlocal current_time
+                    # Advance time slightly each call
+                    current_time += 0.1
+                    return current_time
+                
+                mock_time.side_effect = mock_time_func
+                
+                # Execute the AI command
+                result = await integration._execute_ai_command(
+                    "Test prompt that will timeout",
+                    "coder",
+                    "/tmp/workdir"
+                )
+                
+                # Verify timeout behavior
+                assert result.success is False
+                assert "stalled" in result.error.lower()
+                assert "no output for 1 seconds" in result.error
+                assert result.exit_code == -1
+                assert result.duration > 0
+                
+                # Verify the process was killed
+                mock_process.kill.assert_called_once()
+                
+                # Verify initial output was captured
+                assert "Starting AI processing" in result.output
 
     @pytest.mark.anyio
     async def test_execute_ai_command_exception(self, claude_integration):
