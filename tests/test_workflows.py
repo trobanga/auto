@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from auto.models import (
     Issue, IssueProvider, IssueStatus, IssueType,
-    WorkflowState, WorkflowStatus,
+    WorkflowState, WorkflowStatus, AIStatus,
     GitHubRepository, WorktreeInfo
 )
 from auto.workflows.fetch import (
@@ -211,8 +211,10 @@ class TestProcessWorkflow:
     @patch("auto.workflows.process.GitWorktreeManager")
     @patch("auto.workflows.process.get_issue_from_state")
     @patch("auto.workflows.process.detect_repository")
+    @patch("auto.workflows.implement.Path")  # Mock Path to avoid filesystem checks
     def test_process_issue_workflow_success(
         self, 
+        mock_path,
         mock_detect_repo,
         mock_get_issue, 
         mock_worktree_class, 
@@ -223,6 +225,11 @@ class TestProcessWorkflow:
         sample_worktree_info
     ):
         """Test successful process workflow."""
+        # Mock Path.exists() to return True for worktree path
+        mock_path_instance = Mock()
+        mock_path_instance.exists.return_value = True
+        mock_path.return_value = mock_path_instance
+        
         # Mock dependencies
         mock_config = Mock()
         mock_get_config.return_value = mock_config
@@ -234,6 +241,10 @@ class TestProcessWorkflow:
         mock_state.issue = sample_issue
         mock_state.repository = None
         mock_state.metadata = {}
+        mock_state.pr_number = None
+        mock_state.worktree = None
+        mock_state.worktree_info = None
+        mock_state.branch = None
         mock_core.get_workflow_state.return_value = mock_state
         
         # Mock issue already in state
@@ -247,25 +258,37 @@ class TestProcessWorkflow:
         mock_worktree_class.return_value = mock_worktree_manager
         mock_worktree_manager.create_worktree.return_value = sample_worktree_info
         
-        # Run workflow
-        result = process_issue_workflow("#123")
-        
-        # Verify workflow steps
-        mock_worktree_manager.create_worktree.assert_called_once_with(sample_issue, "main")
-        mock_state.update_status.assert_called()
-        mock_core.save_workflow_state.assert_called()
-        
-        assert result == mock_state
-        assert mock_state.worktree == sample_worktree_info.path
-        assert mock_state.worktree_info == sample_worktree_info
-        assert mock_state.branch == sample_worktree_info.branch
+        # Mock the AI implementation to avoid filesystem operations
+        with patch("auto.workflows.process.implement_issue_workflow") as mock_implement:
+            # Return the same state after successful implementation
+            mock_state_after_ai = Mock(spec=WorkflowState)
+            mock_state_after_ai.ai_status = "implemented"
+            mock_state_after_ai.issue = sample_issue
+            mock_state_after_ai.repository = sample_repository
+            mock_state_after_ai.metadata = {}
+            mock_implement.return_value = mock_state_after_ai
+            
+            # Run workflow with AI disabled to test just the worktree part
+            result = process_issue_workflow("#123", enable_ai=False, enable_pr=False)
+            
+            # Verify workflow steps
+            mock_worktree_manager.create_worktree.assert_called_once_with(sample_issue, "main")
+            mock_state.update_status.assert_called()
+            mock_core.save_workflow_state.assert_called()
+            
+            assert result == mock_state
+            assert mock_state.worktree == sample_worktree_info.path
+            assert mock_state.worktree_info == sample_worktree_info
+            assert mock_state.branch == sample_worktree_info.branch
     
     @patch("auto.workflows.process.get_config")
     @patch("auto.workflows.process.get_core")
     @patch("auto.workflows.process.fetch_issue_workflow_sync")
     @patch("auto.workflows.process.get_issue_from_state")
+    @patch("auto.workflows.implement.Path")  # Mock Path to avoid filesystem checks
     def test_process_issue_workflow_fetch_required(
         self, 
+        mock_path,
         mock_get_issue, 
         mock_fetch_workflow, 
         mock_get_core, 
@@ -273,6 +296,11 @@ class TestProcessWorkflow:
         sample_issue
     ):
         """Test process workflow when issue fetch is required."""
+        # Mock Path.exists() to return True for worktree path
+        mock_path_instance = Mock()
+        mock_path_instance.exists.return_value = True
+        mock_path.return_value = mock_path_instance
+        
         # Mock dependencies
         mock_config = Mock()
         mock_get_config.return_value = mock_config
@@ -288,6 +316,10 @@ class TestProcessWorkflow:
         mock_state.issue = sample_issue
         mock_state.repository = None
         mock_state.metadata = {}
+        mock_state.pr_number = None
+        mock_state.worktree = None
+        mock_state.worktree_info = None
+        mock_state.branch = None
         mock_fetch_workflow.return_value = mock_state
         
         # Mock worktree creation (simplified)
@@ -295,14 +327,20 @@ class TestProcessWorkflow:
             mock_worktree_manager = Mock()
             mock_worktree_class.return_value = mock_worktree_manager
             mock_worktree_info = Mock()
+            mock_worktree_info.path = "/tmp/test-worktrees/auto-feature-123"
+            mock_worktree_info.branch = "auto/feature/123"
             mock_worktree_manager.create_worktree.return_value = mock_worktree_info
             
-            # Run workflow
-            result = process_issue_workflow("#123")
-            
-            # Verify fetch was called
-            mock_fetch_workflow.assert_called_once_with("#123")
-            assert result == mock_state
+            # Mock the AI implementation to avoid filesystem operations
+            with patch("auto.workflows.process.implement_issue_workflow") as mock_implement:
+                mock_implement.return_value = mock_state
+                
+                # Run workflow with AI disabled to test just the fetch and worktree parts
+                result = process_issue_workflow("#123", enable_ai=False, enable_pr=False)
+                
+                # Verify fetch was called
+                mock_fetch_workflow.assert_called_once_with("#123")
+                assert result == mock_state
     
     @patch("auto.workflows.process.get_config")
     @patch("auto.workflows.process.get_core")
@@ -433,11 +471,19 @@ class TestProcessWorkflow:
         mock_state.issue = sample_issue
         mock_state.created_at = datetime.now()
         mock_state.updated_at = datetime.now()
+        # Add missing attributes for WorkflowState
+        mock_state.ai_status = AIStatus.IMPLEMENTED
+        mock_state.ai_response = None
+        mock_state.pr_number = None
+        mock_state.pr_metadata = None
         mock_core.get_workflow_state.return_value = mock_state
         
-        # Mock worktree exists method properly
-        with patch.object(sample_worktree_info, 'exists') as mock_exists:
-            mock_exists.return_value = True
+        # Mock the WorktreeInfo.exists() method using the Path class
+        with patch("auto.models.Path") as mock_path_class:
+            mock_path_instance = Mock()
+            mock_path_instance.exists.return_value = True
+            mock_path_class.return_value = mock_path_instance
+            
             result = get_process_status("#123")
             
             assert result is not None

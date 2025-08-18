@@ -29,19 +29,20 @@ class TestGitHubReviewIntegration:
     @pytest.fixture
     def review_integration(self):
         """Review integration fixture with mocked auth."""
-        with patch('auto.integrations.review.validate_github_auth', return_value=True):
+        with patch('auto.integrations.github.validate_github_auth', return_value=True):
             return GitHubReviewIntegration()
     
     def test_init_success(self):
         """Test successful initialization with valid auth."""
-        with patch('auto.integrations.review.validate_github_auth', return_value=True):
+        with patch('auto.integrations.github.validate_github_auth', return_value=True):
             integration = GitHubReviewIntegration()
             assert integration is not None
     
     def test_init_auth_failure(self):
         """Test initialization failure with invalid auth."""
-        with patch('auto.integrations.review.validate_github_auth', return_value=False):
-            with pytest.raises(Exception):  # Should raise GitHubAuthError
+        from auto.integrations.github import GitHubAuthError
+        with patch('auto.integrations.github.validate_github_auth', return_value=False):
+            with pytest.raises(GitHubAuthError):
                 GitHubReviewIntegration()
     
     @patch('auto.integrations.review.run_command')

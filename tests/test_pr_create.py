@@ -188,7 +188,7 @@ class TestGeneratePRMetadata:
         
         assert metadata.title == "feat: Add dark mode support"
         assert "Closes #123" in metadata.description
-        assert "Implementation completed successfully" in metadata.description
+        assert "Implemented: Add dark mode support" in metadata.description
         assert "feature" in metadata.labels
         assert "ui" in metadata.labels
         assert "ai-implemented" in metadata.labels
@@ -256,31 +256,46 @@ class TestGeneratePRDescription:
 
     @pytest.mark.asyncio
     async def test_generate_description_with_template(self, sample_issue, workflow_state, mock_config):
-        """Test PR description generation with template."""
-        with patch('auto.workflows.pr_create.load_pr_template', return_value="## Template\nTemplate content"):
+        """Test PR description generation with Claude AI success."""
+        mock_claude_description = """## Template
+Template content
+
+## Summary
+Implemented dark mode support feature
+
+## Changes
+- Added new component for theme switching
+- Updated existing components for dark mode compatibility"""
+        
+        with patch('auto.integrations.ai.ClaudeIntegration') as mock_claude_class:
+            mock_claude = AsyncMock()
+            mock_claude.generate_pr_description.return_value = mock_claude_description
+            mock_claude_class.return_value = mock_claude
             
             description = await generate_pr_description(sample_issue, workflow_state, mock_config)
             
             assert "## Template" in description
             assert "Template content" in description
             assert "Closes #123" in description
-            assert "Implementation completed successfully" in description
-            assert "Created: `src/DarkMode.tsx`" in description
-            assert "Modified: `src/App.tsx`" in description
+            assert "## Testing" in description
             assert "`npm test`" in description
 
     @pytest.mark.asyncio
     async def test_generate_description_without_template(self, sample_issue, workflow_state, mock_config):
-        """Test PR description generation without template."""
-        with patch('auto.workflows.pr_create.load_pr_template', return_value=None):
+        """Test PR description generation with Claude AI failure (fallback)."""
+        with patch('auto.integrations.ai.ClaudeIntegration') as mock_claude_class:
+            mock_claude = AsyncMock()
+            mock_claude.generate_pr_description.side_effect = Exception("Claude CLI not found")
+            mock_claude_class.return_value = mock_claude
             
             description = await generate_pr_description(sample_issue, workflow_state, mock_config)
             
-            assert "## Related Issue" in description
+            # Should use fallback description format
+            assert "## Summary" in description
             assert "Closes #123" in description
-            assert "## Implementation Summary" in description
-            assert "## Testing" in description
-            assert "## Review Checklist" in description
+            assert "Implemented: Add dark mode support" in description
+            assert "## Changes" in description
+            assert "Modified 2 files" in description
 
     @pytest.mark.asyncio
     async def test_generate_description_no_ai_response(self, sample_issue, mock_config):

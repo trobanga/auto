@@ -498,14 +498,14 @@ class ReviewCommentProcessor:
         if has_doc_context or (has_doc_indicators and re.search(r'\b(document|documentation)\b', comment_lower)):
             return CommentCategory.DOCUMENTATION
         
-        # Check for style next - style-related fixes should be style, not bugs
-        has_style_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._style_patterns)
-        if has_style_indicators:
-            return CommentCategory.STYLE
+        # Check for nitpicks first - they override other categories like style
+        if re.search(r'\b(nit|nitpick|minor|tiny)\b', comment_lower):
+            return CommentCategory.NITPICK
         
-        # Check for bugs next - but only if not related to performance
+        # Check for bugs and performance next - they have higher priority than style
         has_bug_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._bug_patterns)
         has_performance_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._performance_patterns)
+        has_style_indicators = any(re.search(pattern, comment_lower, re.IGNORECASE) for pattern in self._style_patterns)
         
         # If it has both bug and performance indicators, check which takes priority
         if has_bug_indicators and has_performance_indicators:
@@ -519,14 +519,15 @@ class ReviewCommentProcessor:
         elif has_performance_indicators:
             return CommentCategory.PERFORMANCE
         
+        # Check for style after performance/bug - style has lower priority
+        if has_style_indicators:
+            return CommentCategory.STYLE
+        
         for pattern in self._documentation_patterns:
             if re.search(pattern, comment_lower, re.IGNORECASE):
                 return CommentCategory.DOCUMENTATION
         
         # Additional category detection
-        
-        if re.search(r'\b(nit|nitpick|minor|tiny)\b', comment_lower):
-            return CommentCategory.NITPICK
         
         if re.search(r'\b(suggest|recommend|consider|maybe|could)\b', comment_lower):
             return CommentCategory.SUGGESTION
@@ -890,7 +891,7 @@ Keep the response professional, concise, and constructive."""
             
             # Determine if acknowledgment is present
             acknowledgment = any(word in response_text.lower() for word in [
-                'acknowledge', 'thanks', 'agree', 'understand', 'good point'
+                'acknowledge', 'thank', 'thanks', 'agree', 'understand', 'good point'
             ])
             
             # Extract planned action
