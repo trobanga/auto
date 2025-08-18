@@ -409,3 +409,44 @@ async def initiate_review_cycle(pr_number: int, repository: str) -> ReviewCycleS
     """
     logger.info(f"Initiating review cycle for existing PR #{pr_number}")
     return await execute_review_cycle(pr_number, repository)
+
+async def get_review_cycle_status(
+    pr_number: int,
+    owner: str,
+    repo: str
+) -> Optional[ReviewCycleState]:
+    """Get current review cycle status for a PR.
+    
+    Args:
+        pr_number: Pull request number
+        owner: Repository owner
+        repo: Repository name
+        
+    Returns:
+        Review cycle state or None if not found
+    """
+    try:
+        from auto.core import get_core
+        
+        core = get_core()
+        review_state = core.get_review_cycle_state(pr_number)
+        
+        if not review_state:
+            return None
+        
+        # Convert dict to ReviewCycleState object
+        return ReviewCycleState(
+            pr_number=pr_number,
+            owner=owner,
+            repo=repo,
+            status=ReviewCycleStatus(review_state.get('status', 'not_started')),
+            iteration_count=review_state.get('iteration_count', 0),
+            ai_reviews=review_state.get('ai_reviews', []),
+            human_reviews=review_state.get('human_reviews', []),
+            last_update_timestamp=review_state.get('last_updated'),
+            max_iterations=review_state.get('max_iterations', 10)
+        )
+        
+    except Exception as e:
+        logger.error(f"Error getting review cycle status for PR #{pr_number}: {e}")
+        return None

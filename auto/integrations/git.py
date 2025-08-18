@@ -435,6 +435,23 @@ class GitWorktreeManager:
         except Exception as e:
             logger.warning(f"Failed to clean up after worktree creation failure: {e}")
 
+class GitIntegration:
+    """Git integration for merge operations."""
+    
+    def __init__(self):
+        """Initialize Git integration."""
+        from auto.config import get_config
+        self.config = get_config()
+        self.worktree_manager = GitWorktreeManager(self.config)
+    
+    async def remove_worktree(self, worktree_path: Path) -> None:
+        """Remove a worktree.
+        
+        Args:
+            worktree_path: Path to worktree to remove
+        """
+        return self.worktree_manager.cleanup_worktree(worktree_path)
+
 
 def create_worktree(issue: Issue, config: Config, base_branch: str = "main") -> WorktreeInfo:
     """Create worktree for issue.

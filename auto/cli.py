@@ -2,6 +2,7 @@
 
 import sys
 from pathlib import Path
+from typing import Optional
 
 import click
 from rich.console import Console
@@ -903,26 +904,160 @@ def process(
 
 @cli.command()
 @click.argument("pr_id")
-def review(pr_id: str) -> None:
-    """Trigger AI review on existing PR (Phase 4+)."""
-    console.print(f"[blue]Info:[/blue] Would trigger AI review on PR: {pr_id}")
-    console.print("[yellow]Note:[/yellow] Full implementation coming in Phase 4")
+@click.option("--force", is_flag=True, help="Force review even if already reviewed")
+@click.option("--agent", default=None, help="Override AI agent for review")
+def review(pr_id: str, force: bool, agent: Optional[str]) -> None:
+    """Trigger AI review on existing PR."""
+    try:
+        from auto.integrations.github import detect_repository
+        from auto.workflows.review import trigger_ai_review
+        
+        console.print(f"[blue]Starting AI review for PR #{pr_id}...[/blue]")
+        
+        # Detect repository
+        try:
+            repo = detect_repository()
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not detect repository: {e}")
+            sys.exit(1)
+        
+        # Parse PR ID
+        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
+        
+        # Trigger AI review
+        import asyncio
+        success = asyncio.run(trigger_ai_review(
+            pr_number=pr_number,
+            owner=repo.owner,
+            repo=repo.name,
+            force_review=force,
+            agent_override=agent
+        ))
+        
+        if success:
+            console.print(f"[green]✓[/green] AI review completed for PR #{pr_number}")
+            console.print(f"[blue]View the review:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}")
+        else:
+            console.print(f"[red]✗[/red] AI review failed for PR #{pr_number}")
+            sys.exit(1)
+            
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Review command failed: {e}")
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
 
 
 @cli.command()
 @click.argument("pr_id")
-def update(pr_id: str) -> None:
-    """Update PR based on review comments (Phase 4+)."""
-    console.print(f"[blue]Info:[/blue] Would update PR based on reviews: {pr_id}")
-    console.print("[yellow]Note:[/yellow] Full implementation coming in Phase 4")
+@click.option("--force", is_flag=True, help="Force update even if no unresolved comments")
+@click.option("--agent", default=None, help="Override AI agent for updates")
+def update(pr_id: str, force: bool, agent: Optional[str]) -> None:
+    """Update PR based on review comments."""
+    try:
+        from auto.integrations.github import detect_repository
+        from auto.workflows.review_update import execute_review_update
+        
+        console.print(f"[blue]Updating PR #{pr_id} based on review comments...[/blue]")
+        
+        # Detect repository
+        try:
+            repo = detect_repository()
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not detect repository: {e}")
+            sys.exit(1)
+        
+        # Parse PR ID
+        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
+        
+        # Execute review update
+        import asyncio
+        success = asyncio.run(execute_review_update(
+            pr_number=pr_number,
+            owner=repo.owner,
+            repo=repo.name,
+            force_update=force,
+            agent_override=agent
+        ))
+        
+        if success:
+            console.print(f"[green]✓[/green] PR #{pr_number} updated successfully")
+            console.print(f"[blue]View the updates:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}")
+        else:
+            console.print(f"[red]✗[/red] Failed to update PR #{pr_number}")
+            sys.exit(1)
+            
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Update command failed: {e}")
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
 
 
 @cli.command()
 @click.argument("pr_id")
-def merge(pr_id: str) -> None:
-    """Merge PR after approval (Phase 5+)."""
-    console.print(f"[blue]Info:[/blue] Would merge PR: {pr_id}")
-    console.print("[yellow]Note:[/yellow] Full implementation coming in Phase 5")
+@click.option("--force", is_flag=True, help="Force merge even if some checks fail")
+@click.option("--method", type=click.Choice(["merge", "squash", "rebase"]), default="merge", help="Merge method")
+@click.option("--cleanup/--no-cleanup", default=True, help="Clean up worktree after merge")
+def merge(pr_id: str, force: bool, method: str, cleanup: bool) -> None:
+    """Merge PR after approval validation."""
+    try:
+        from auto.integrations.github import detect_repository
+        from auto.workflows.merge import execute_auto_merge
+        from auto.core import get_core
+        
+        console.print(f"[blue]Starting merge process for PR #{pr_id}...[/blue]")
+        
+        # Detect repository
+        try:
+            repo = detect_repository()
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not detect repository: {e}")
+            sys.exit(1)
+        
+        # Parse PR ID
+        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
+        
+        # Get worktree path if cleanup is enabled
+        worktree_path = None
+        if cleanup:
+            try:
+                core = get_core()
+                # Try to find associated worktree for this PR
+                # This would need to be implemented based on state management
+                pass
+            except Exception:
+                logger.warning("Could not determine worktree path for cleanup")
+        
+        # Execute merge
+        import asyncio
+        success = asyncio.run(execute_auto_merge(
+            pr_number=pr_number,
+            owner=repo.owner,
+            repo=repo.name,
+            worktree_path=worktree_path,
+            force=force
+        ))
+        
+        if success:
+            console.print(f"[green]✓[/green] PR #{pr_number} merged successfully")
+            if cleanup and worktree_path:
+                console.print(f"[green]✓[/green] Worktree cleaned up")
+        else:
+            console.print(f"[red]✗[/red] Failed to merge PR #{pr_number}")
+            sys.exit(1)
+            
+    except ValueError as e:
+        console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Merge command failed: {e}")
+        console.print(f"[red]Error:[/red] {e}")
+        sys.exit(1)
 
 
 @cli.command()
