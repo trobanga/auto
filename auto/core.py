@@ -1,7 +1,7 @@
 """Main workflow orchestrator for the auto tool."""
 
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from auto.config import get_config
 from auto.models import IssueIdentifier, WorkflowState, WorkflowStatus

@@ -2,8 +2,7 @@
 
 import json
 import pytest
-from datetime import datetime
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 from auto.integrations.github import (
     GitHubIntegration,
@@ -13,7 +12,7 @@ from auto.integrations.github import (
     validate_github_auth,
     detect_repository,
 )
-from auto.models import GitHubRepository, Issue, IssueProvider, IssueStatus
+from auto.models import GitHubRepository, IssueProvider, IssueStatus
 from auto.utils.shell import ShellError, ShellResult
 
 

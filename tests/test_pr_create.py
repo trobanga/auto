@@ -1,10 +1,8 @@
 """Tests for PR creation workflow."""
 
 import pytest
-import anyio
-import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from auto.workflows.pr_create import (
     create_pull_request_workflow,

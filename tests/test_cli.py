@@ -1,7 +1,5 @@
 """Tests for CLI interface."""
 
-from pathlib import Path
-import pytest
 from unittest.mock import patch, Mock
 
 from auto.cli import cli

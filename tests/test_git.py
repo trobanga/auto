@@ -1,9 +1,8 @@
 """Tests for git worktree management."""
 
 import pytest
-import tempfile
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from auto.integrations.git import (
     GitWorktreeManager,

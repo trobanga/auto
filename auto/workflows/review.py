@@ -10,13 +10,13 @@ This module implements the complete review cycle workflow including:
 
 import asyncio
 import time
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 from enum import Enum
 
 from ..config import get_config
 from ..integrations.ai import ClaudeIntegration
-from ..integrations.review import GitHubReviewIntegration, PRReview, ReviewComment
+from ..integrations.review import GitHubReviewIntegration, ReviewComment
 from ..utils.logger import logger
 
 
@@ -170,11 +170,11 @@ async def trigger_ai_review(state: ReviewCycleState) -> None:
         
         # Post AI review comments
         if ai_response.comments:
-            await review_integration.post_ai_review(
+            review_integration.post_ai_review(
                 pr_number=state.pr_number,
-                repository=state.repository,
+                review_body=ai_response.summary or "AI Review",
                 comments=ai_response.comments,
-                overall_feedback=ai_response.summary
+                repository=None  # Let integration auto-detect repository
             )
             
             logger.info(f"Posted {len(ai_response.comments)} AI review comments")
@@ -229,9 +229,9 @@ async def wait_for_human_review(
         
         while (time.time() - start_time) < timeout_seconds:
             # Check for new reviews
-            reviews = await review_integration.get_pr_reviews(
+            reviews = review_integration.get_pr_reviews(
                 pr_number=state.pr_number,
-                repository=state.repository
+                repository=None  # Let integration auto-detect repository
             )
             
             # Filter for human reviews (non-bot reviews)
@@ -282,9 +282,9 @@ async def process_review_comments(state: ReviewCycleState) -> None:
         review_integration = GitHubReviewIntegration()
         
         # Get all unresolved comments
-        unresolved = await review_integration.get_unresolved_comments(
+        unresolved = review_integration.get_unresolved_comments(
             pr_number=state.pr_number,
-            repository=state.repository
+            repository=None  # Let integration auto-detect repository
         )
         
         state.unresolved_comments = unresolved
@@ -294,7 +294,7 @@ async def process_review_comments(state: ReviewCycleState) -> None:
         if unresolved:
             categories = {}
             for comment in unresolved:
-                category = comment.file_path or "general"
+                category = comment.path or "general"
                 categories[category] = categories.get(category, 0) + 1
             
             logger.debug(f"Comment categories: {categories}")
@@ -318,20 +318,20 @@ async def check_cycle_completion(state: ReviewCycleState) -> ReviewCycleStatus:
         review_integration = GitHubReviewIntegration()
         
         # Check approval status
-        approval_status = await review_integration.check_approval_status(
+        is_approved, approving_reviewers, requesting_changes_reviewers = review_integration.check_approval_status(
             pr_number=state.pr_number,
-            repository=state.repository
+            repository=None  # Let integration auto-detect repository
         )
         
-        logger.info(f"PR approval status: {approval_status}")
+        logger.info(f"PR approval status: approved={is_approved}, approvers={approving_reviewers}, requesting_changes={requesting_changes_reviewers}")
         
         # If approved and no unresolved comments, we're done
-        if approval_status["approved"] and not state.unresolved_comments:
+        if is_approved and not state.unresolved_comments:
             logger.info("PR approved with no unresolved comments - cycle complete")
             return ReviewCycleStatus.APPROVED
         
         # If changes requested or unresolved comments, continue cycle
-        if approval_status["changes_requested"] or state.unresolved_comments:
+        if requesting_changes_reviewers or state.unresolved_comments:
             logger.info("Changes requested or unresolved comments - continuing cycle")
             return ReviewCycleStatus.CHANGES_REQUESTED
         
@@ -366,7 +366,7 @@ async def trigger_ai_update(state: ReviewCycleState) -> None:
         
         # Format comments for AI
         comments_text = "\n".join([
-            f"File: {comment.file_path}\nLine: {comment.line_number}\nComment: {comment.body}"
+            f"File: {comment.path}\nLine: {comment.line}\nComment: {comment.body}"
             for comment in state.unresolved_comments
         ])
         

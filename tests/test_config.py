@@ -1,13 +1,10 @@
 """Tests for configuration management."""
 
 import os
-import tempfile
-from pathlib import Path
 import pytest
 import yaml
 
-from auto.config import ConfigManager, ConfigError
-from auto.models import Config
+from auto.config import ConfigError
 
 
 class TestConfigManager:

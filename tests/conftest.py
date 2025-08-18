@@ -1,12 +1,10 @@
 """Shared test configuration and fixtures."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import Mock
 import pytest
 
 from auto.config import ConfigManager
-from auto.models import Config
 
 
 @pytest.fixture
@@ -97,7 +95,6 @@ def test_config(isolated_config_manager):
 @pytest.fixture
 def mock_git_root(tmp_path, monkeypatch):
     """Mock git root to return a temporary directory."""
-    from auto.utils.shell import get_git_root
     
     git_root = tmp_path / "git_repo"
     git_root.mkdir()
@@ -133,7 +130,7 @@ def mock_ai_integration(monkeypatch):
     mock = Mock()
     
     # Mock the ClaudeIntegration class
-    from auto.integrations.ai import ClaudeIntegration, AIResponse
+    from auto.integrations.ai import AIResponse
     
     def mock_claude_init(config):
         return mock
@@ -160,7 +157,6 @@ def mock_ai_integration(monkeypatch):
 def mock_auto_core(tmp_path, monkeypatch):
     """Mock AutoCore to use isolated state directory."""
     from auto.core import AutoCore
-    from auto.models import WorkflowState
     
     # Create a mock state directory
     state_dir = tmp_path / ".auto" / "state"

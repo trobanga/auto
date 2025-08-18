@@ -7,18 +7,13 @@ properly address feedback without introducing regressions.
 
 import pytest
 import asyncio
-from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Any
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock
 
-from auto.models import ReviewComment, Issue
 from auto.workflows.review_update import (
     ReviewUpdateWorkflow,
     UpdateResult,
     UpdateStatus,
     UpdateValidation,
-    UpdatePlan,
     UpdateType
 )
 

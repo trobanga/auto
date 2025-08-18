@@ -6,13 +6,10 @@ through AI-powered code changes and validation.
 """
 
 import pytest
-import asyncio
 from datetime import datetime
-from pathlib import Path
-from typing import List, Dict, Any
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 
-from auto.models import ReviewComment, Issue, AIResponse, WorktreeInfo
+from auto.models import ReviewComment, Issue, AIResponse
 from auto.integrations.github import GitHubIntegration
 from auto.integrations.git import GitWorktreeManager
 from auto.integrations.ai import ClaudeIntegration
@@ -30,7 +27,6 @@ from auto.workflows.review_update import (
     UpdateStatus,
     UpdatePlan,
     UpdateResult,
-    UpdateBatch,
     UpdateValidation,
     CommitStrategy
 )

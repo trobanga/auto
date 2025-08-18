@@ -5,7 +5,7 @@ import subprocess
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
-from auto.models import GitHubRepository, PullRequest, Review, ReviewStatus, ReviewType
+from auto.models import GitHubRepository
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command, ShellError
 
@@ -98,7 +98,7 @@ class PRReview(dict):
         self.author = author
         self.submitted_at = submitted_at
         self.comments = comments or []
-        
+
         # Store in dict for JSON serialization
         self.update({
             'id': id,

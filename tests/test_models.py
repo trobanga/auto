@@ -1,7 +1,6 @@
 """Tests for data models."""
 
 import pytest
-from datetime import datetime
 
 from auto.models import (
     Issue,

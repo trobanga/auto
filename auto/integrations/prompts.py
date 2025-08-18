@@ -5,12 +5,11 @@ Provides custom prompt resolution, template loading, variable expansion, and val
 for AI command customization in the auto workflow system.
 """
 
-import os
 import re
 import yaml
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Any
 from ..models import Issue
 from ..utils.logger import get_logger
 

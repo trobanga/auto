@@ -6,8 +6,8 @@ from typing import Optional
 from auto.config import get_config
 from auto.core import get_core
 from auto.integrations.git import GitWorktreeManager, GitWorktreeError
-from auto.integrations.github import GitHubIntegration, detect_repository
-from auto.models import Issue, IssueIdentifier, WorkflowState, WorkflowStatus, AIStatus
+from auto.integrations.github import detect_repository
+from auto.models import IssueIdentifier, WorkflowState, WorkflowStatus, AIStatus
 from auto.utils.logger import get_logger
 from auto.workflows.fetch import fetch_issue_workflow_sync, get_issue_from_state
 from auto.workflows.implement import implement_issue_workflow, ImplementationError

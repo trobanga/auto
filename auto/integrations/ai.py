@@ -806,34 +806,34 @@ This PR implements the requested functionality with {len(file_changes)} file cha
             
             # Status text
             status_text = Text()
-            status_text.append(f"🤖 AI Agent: ", style="bold cyan")
+            status_text.append("🤖 AI Agent: ", style="bold cyan")
             status_text.append(f"{agent}\n", style="bright_blue")
             
             # Show prompt (truncated)
-            status_text.append(f"💬 Prompt: ", style="bold magenta")
+            status_text.append("💬 Prompt: ", style="bold magenta")
             prompt_preview = prompt[:100] + "..." if len(prompt) > 100 else prompt
             # Remove agent prefix if present
             if prompt_preview.startswith(f"agent-{agent}, "):
                 prompt_preview = prompt_preview[len(f"agent-{agent}, "):]
             status_text.append(f"{prompt_preview}\n", style="dim white")
             
-            status_text.append(f"⏱️  Elapsed: ", style="bold yellow")
+            status_text.append("⏱️  Elapsed: ", style="bold yellow")
             status_text.append(f"{elapsed_str}\n", style="bright_yellow")
-            status_text.append(f"📡 Last Activity: ", style="bold green")
+            status_text.append("📡 Last Activity: ", style="bold green")
             status_text.append(f"{activity_str}\n", style=activity_style)
-            status_text.append(f"📊 Status: ", style="bold magenta")
+            status_text.append("📊 Status: ", style="bold magenta")
             status_text.append(f"{status_state}\n", style=status_style)
             
             # Output statistics
             if output_bytes > 0 or error_bytes > 0:
-                status_text.append(f"📈 Output: ", style="bold blue")
+                status_text.append("📈 Output: ", style="bold blue")
                 status_text.append(f"{len(output_lines)} lines, {output_bytes} bytes", style="bright_blue")
                 if error_bytes > 0:
                     status_text.append(f" | {len(error_lines)} errors, {error_bytes} bytes", style="bright_red")
                 status_text.append("\n")
             
             # Show command being executed
-            status_text.append(f"🔧 Command: ", style="bold white")
+            status_text.append("🔧 Command: ", style="bold white")
             cmd_parts = ["claude"]
             if streaming_enabled:
                 cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
@@ -843,18 +843,18 @@ This PR implements the requested functionality with {len(file_changes)} file cha
             
             # Show process PID if available
             if hasattr(process, 'pid') and process.pid:
-                status_text.append(f"🆔 PID: ", style="bold white")
+                status_text.append("🆔 PID: ", style="bold white")
                 status_text.append(f"{process.pid}\n", style="dim white")
             
             # Show output status
             if show_output_toggle:
-                status_text.append(f"📺 Output Display: ", style="bold white")
+                status_text.append("📺 Output Display: ", style="bold white")
 
             if show_output_toggle and output_lines:
                 # Show recent output lines
                 recent_lines = output_lines[-3:] if len(output_lines) > 3 else output_lines
                 if recent_lines:
-                    status_text.append(f"\n📝 Recent Output:\n", style="bold blue")
+                    status_text.append("\n📝 Recent Output:\n", style="bold blue")
                     for line in recent_lines:
                         if line.strip():
                             truncated = line[:80] + "..." if len(line) > 80 else line
@@ -1096,9 +1096,7 @@ This PR implements the requested functionality with {len(file_changes)} file cha
         
         try:
             # Import here to avoid circular imports
-            from ..integrations.review import GitHubReviewIntegration
             from ..integrations.prompts import PromptManager
-            from ..utils.shell import run_command
             
             # Get PR details
             pr_details = await self._get_pr_details(pr_number, repository)
@@ -1536,7 +1534,7 @@ Please implement the necessary changes to address all valid review feedback."""
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     files = result.stdout.strip().split('\n')[:20]  # Limit to 20 files
-                    context_parts.append(f"Key files:\n" + "\n".join(files))
+                    context_parts.append("Key files:\n" + "\n".join(files))
             except (subprocess.TimeoutExpired, subprocess.SubprocessError):
                 pass
             
@@ -1621,7 +1619,7 @@ Please implement the necessary changes to address all valid review feedback."""
                 raise AIIntegrationError(f"Claude CLI not working properly (exit code: {result.returncode})")
                 
         except (asyncio.TimeoutError, FileNotFoundError):
-            raise AIIntegrationError(f"Claude CLI not found or not responding. Please install and configure the claude command.")
+            raise AIIntegrationError("Claude CLI not found or not responding. Please install and configure the claude command.")
         
         # Validate agent configuration
         if not self.config.implementation_agent:

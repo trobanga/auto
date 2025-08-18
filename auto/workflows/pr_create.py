@@ -7,10 +7,10 @@ template support, and metadata management.
 
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from ..integrations.github import GitHubIntegration, GitHubIntegrationError
-from ..models import Issue, WorkflowState, WorkflowStatus, PRMetadata, PullRequest, PRStatus
+from ..models import Issue, WorkflowState, WorkflowStatus, PRMetadata, PullRequest
 from ..utils.logger import get_logger
 from ..config import Config
 
@@ -276,19 +276,19 @@ def _generate_fallback_pr_description(
     description_parts = []
     
     # Basic summary
-    description_parts.append(f"## Summary")
+    description_parts.append("## Summary")
     description_parts.append(f"Implemented: {issue.title}")
     description_parts.append("")
     
     # Add issue description if available
     if issue.description and len(issue.description.strip()) > 20:
-        description_parts.append(f"## Description")
+        description_parts.append("## Description")
         description_parts.append(issue.description.strip())
         description_parts.append("")
     
     # Add basic implementation info
     if workflow_state.ai_response:
-        description_parts.append(f"## Changes")
+        description_parts.append("## Changes")
         
         if workflow_state.ai_response.file_changes:
             description_parts.append(f"- Modified {len(workflow_state.ai_response.file_changes)} files")

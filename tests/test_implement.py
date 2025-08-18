@@ -1,10 +1,9 @@
 """Tests for AI implementation workflow."""
 
 import pytest
-import anyio
 import subprocess
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from auto.workflows.implement import (
     implement_issue_workflow,
@@ -17,7 +16,7 @@ from auto.workflows.implement import (
 )
 from auto.models import (
     Issue, IssueProvider, IssueStatus, WorkflowState, WorkflowStatus,
-    AIStatus, AIResponse, WorktreeInfo
+    AIStatus, AIResponse
 )
 
 

@@ -9,11 +9,8 @@ Tests cover:
 """
 
 import pytest
-import asyncio
 import time
-from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from dataclasses import dataclass
-from typing import List, Dict, Any
+from unittest.mock import Mock, AsyncMock, patch
 
 from auto.workflows.review import (
     execute_review_cycle,
@@ -27,8 +24,8 @@ from auto.workflows.review import (
     ReviewCycleState,
     ReviewWorkflowError,
 )
-from auto.integrations.ai import ClaudeIntegration, AIResponse
-from auto.integrations.review import GitHubReviewIntegration, ReviewComment, PRReview
+from auto.integrations.ai import AIResponse
+from auto.integrations.review import ReviewComment, PRReview
 from auto.models import AIConfig
 
 
@@ -62,17 +59,17 @@ def sample_review_comments():
     """Sample review comments for testing."""
     return [
         ReviewComment(
-            id="1",
+            id=1,
             body="This function is too complex, consider breaking it down",
-            file_path="src/main.py",
-            line_number=45,
+            path="src/main.py",
+            line=45,
             author="reviewer1"
         ),
         ReviewComment(
-            id="2",
+            id=2,
             body="Add error handling for this API call",
-            file_path="src/api.py",
-            line_number=23,
+            path="src/api.py",
+            line=23,
             author="reviewer2"
         )
     ]
@@ -81,20 +78,21 @@ def sample_review_comments():
 @pytest.fixture
 def sample_pr_reviews():
     """Sample PR reviews for testing."""
+    from datetime import datetime
     return [
         PRReview(
-            id="review1",
+            id=1,
             author="reviewer1",
             state="COMMENTED",
             body="Found a few issues that need addressing",
-            submitted_at="2024-01-15T10:00:00Z"
+            submitted_at=datetime.fromisoformat("2024-01-15T10:00:00+00:00")
         ),
         PRReview(
-            id="review2", 
+            id=2, 
             author="reviewer2",
             state="APPROVED",
             body="Looks good to merge!",
-            submitted_at="2024-01-15T11:00:00Z"
+            submitted_at=datetime.fromisoformat("2024-01-15T11:00:00+00:00")
         )
     ]
 
@@ -200,7 +198,7 @@ class TestAIReviewExecution:
             mock_ai_class.return_value = mock_ai
             
             mock_review = Mock()
-            mock_review.post_ai_review = AsyncMock()
+            mock_review.post_ai_review.return_value = Mock()  # Return a mock review object
             mock_review_class.return_value = mock_review
             
             # Execute AI review
@@ -269,7 +267,7 @@ class TestHumanReviewMonitoring:
         )
         
         with patch('auto.workflows.review.get_config') as mock_get_config, \
-             patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+             patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             
             # Setup config
             mock_config = Mock()
@@ -304,7 +302,7 @@ class TestHumanReviewMonitoring:
         )
         
         with patch('auto.workflows.review.get_config') as mock_get_config, \
-             patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+             patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             
             # Setup config
             mock_config = Mock()
@@ -341,7 +339,7 @@ class TestReviewCommentProcessing:
             max_iterations=3
         )
         
-        with patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+        with patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             # Setup review integration mock
             mock_review = Mock()
             mock_review.get_unresolved_comments.return_value = sample_review_comments
@@ -373,15 +371,14 @@ class TestCycleCompletion:
             max_iterations=3
         )
         
-        with patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+        with patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             # Setup review integration mock - approved with no unresolved comments
             mock_review = Mock()
-            mock_review.check_approval_status.return_value = {
-                "approved": True,
-                "changes_requested": False,
-                "approving_reviewers": ["reviewer1"],
-                "requesting_changes_reviewers": []
-            }
+            mock_review.check_approval_status.return_value = (
+                True,  # is_approved
+                ["reviewer1"],  # approving_reviewers
+                []  # requesting_changes_reviewers
+            )
             mock_review_class.return_value = mock_review
             
             # Check cycle completion
@@ -405,15 +402,14 @@ class TestCycleCompletion:
             max_iterations=3
         )
         
-        with patch('auto.integrations.review.GitHubReviewIntegration') as mock_review_class:
+        with patch('auto.workflows.review.GitHubReviewIntegration') as mock_review_class:
             # Setup review integration mock - changes requested
             mock_review = Mock()
-            mock_review.check_approval_status.return_value = {
-                "approved": False,
-                "changes_requested": True,
-                "approving_reviewers": [],
-                "requesting_changes_reviewers": ["reviewer1"]
-            }
+            mock_review.check_approval_status.return_value = (
+                False,  # is_approved
+                [],  # approving_reviewers
+                ["reviewer1"]  # requesting_changes_reviewers
+            )
             mock_review_class.return_value = mock_review
             
             # Check cycle completion

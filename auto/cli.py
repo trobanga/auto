@@ -2,7 +2,6 @@
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import click
 from rich.console import Console
@@ -15,23 +14,12 @@ from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command
 from auto.workflows.fetch import (
-    fetch_issue_workflow, fetch_issue_workflow_sync, validate_issue_access, get_issue_from_state
-)
-from auto.workflows.process import (
-    process_issue_workflow, cleanup_process_workflow, validate_process_prerequisites
-)
-from auto.workflows.implement import (
-    implement_issue_workflow, validate_implementation_prerequisites
+    fetch_issue_workflow_sync, validate_issue_access
 )
 
 logger = get_logger(__name__)
 console = Console()
 
-
-def fetch_issue_workflow_sync(issue_id: str):
-    """Synchronous wrapper for fetch_issue_workflow."""
-    import asyncio
-    return asyncio.run(fetch_issue_workflow(issue_id))
 
 
 def enable_verbose_logging() -> None:
@@ -254,7 +242,7 @@ def config_show(format: str, section: str) -> None:
             console.print(table)
             
             # Show configuration sources
-            console.print(f"\n[bold]Configuration Sources:[/bold]")
+            console.print("\n[bold]Configuration Sources:[/bold]")
             config_files = config_manager.list_config_files()
             for config_type, path in config_files.items():
                 if path and path.exists():
@@ -384,7 +372,7 @@ def status(verbose: bool) -> None:
             console.print(f"    {ai_status}: {count}")
         
         if verbose:
-            console.print(f"  [bold]Resources:[/bold]")
+            console.print("  [bold]Resources:[/bold]")
             console.print(f"    Active worktrees: {worktree_count}")
             console.print(f"    Pull requests: {pr_count}")
         
@@ -437,7 +425,7 @@ def cleanup(force: bool, verbose: bool) -> None:
                         if success:
                             worktree_cleaned_count += 1
                             if verbose:
-                                console.print(f"  [green]✓[/green] Worktree cleaned up")
+                                console.print("  [green]✓[/green] Worktree cleaned up")
                         else:
                             errors.append(f"Failed to clean up worktree for {state.issue_id}")
                     
@@ -466,7 +454,7 @@ def cleanup(force: bool, verbose: bool) -> None:
             console.print("[yellow]No workflows needed cleanup.[/yellow]")
         
         if errors:
-            console.print(f"\n[red]Errors encountered:[/red]")
+            console.print("\n[red]Errors encountered:[/red]")
             for error in errors:
                 console.print(f"  - {error}")
             
@@ -519,13 +507,13 @@ def fetch(issue_id: str, verbose: bool) -> None:
                 if state.issue.url:
                     console.print(f"  URL: {state.issue.url}")
             
-            console.print(f"[green]✓[/green] Workflow state created")
+            console.print("[green]✓[/green] Workflow state created")
             
             if verbose:
                 console.print(f"  State file: .auto/state/{identifier.issue_id}.yaml")
                 console.print(f"  Status: {state.status.value}")
         else:
-            console.print(f"[red]Error:[/red] Failed to fetch issue details")
+            console.print("[red]Error:[/red] Failed to fetch issue details")
             sys.exit(1)
         
     except FetchWorkflowError as e:
@@ -624,7 +612,7 @@ def implement(
                 console.print(f"[blue]Info:[/blue] Agent override: {original_agent} → {agent}")
         
         # Run AI implementation
-        console.print(f"[blue]Info:[/blue] Running AI implementation...")
+        console.print("[blue]Info:[/blue] Running AI implementation...")
         
         try:
             state = asyncio.run(implement_issue_workflow(
@@ -646,7 +634,7 @@ def implement(
             
             # Show implementation results
             if state.ai_response and state.ai_response.success:
-                console.print(f"[green]✓[/green] AI implementation completed")
+                console.print("[green]✓[/green] AI implementation completed")
                 
                 if verbose and state.ai_response:
                     file_count = len(state.ai_response.file_changes)
@@ -663,12 +651,12 @@ def implement(
                         if len(state.ai_response.file_changes) > 5:
                             console.print(f"    ... and {len(state.ai_response.file_changes) - 5} more")
                 
-                console.print(f"[green]✓[/green] Changes applied successfully")
-                console.print(f"[green]✓[/green] Workflow state updated")
+                console.print("[green]✓[/green] Changes applied successfully")
+                console.print("[green]✓[/green] Workflow state updated")
                 
                 # Create PR if not disabled
                 if not no_pr:
-                    console.print(f"[blue]Info:[/blue] Creating pull request...")
+                    console.print("[blue]Info:[/blue] Creating pull request...")
                     try:
                         state = asyncio.run(create_pull_request_workflow(
                             issue=issue,
@@ -683,7 +671,7 @@ def implement(
                                 pr_url = f"https://github.com/{state.repository.full_name}/pull/{state.pr_number}"
                                 console.print(f"  URL: {pr_url}")
                         else:
-                            console.print(f"[yellow]Warning:[/yellow] PR creation completed but no PR number available")
+                            console.print("[yellow]Warning:[/yellow] PR creation completed but no PR number available")
                         
                     except PRCreationError as e:
                         console.print(f"[red]Error:[/red] Failed to create PR: {e}")
@@ -693,7 +681,7 @@ def implement(
                     console.print("[blue]Info:[/blue] PR creation skipped (--no-pr)")
                 
             else:
-                console.print(f"[red]Error:[/red] AI implementation failed")
+                console.print("[red]Error:[/red] AI implementation failed")
                 if state.ai_response and state.ai_response.content:
                     console.print(f"  Reason: {state.ai_response.content}")
                 sys.exit(1)
@@ -785,7 +773,7 @@ def process(
             errors = validate_process_prerequisites(identifier.issue_id)
             
             if errors:
-                console.print(f"[red]Error:[/red] Prerequisites not met:")
+                console.print("[red]Error:[/red] Prerequisites not met:")
                 for error in errors:
                     console.print(f"  - {error}")
                 sys.exit(1)
@@ -853,16 +841,16 @@ def process(
         # Show AI implementation results
         if not no_ai and state.ai_response:
             if state.ai_response.success:
-                console.print(f"[green]✓[/green] AI implementation completed")
+                console.print("[green]✓[/green] AI implementation completed")
                 if verbose:
                     file_count = len(state.ai_response.file_changes)
                     cmd_count = len(state.ai_response.commands)
                     console.print(f"  Files modified: {file_count}")
                     console.print(f"  Commands executed: {cmd_count}")
             else:
-                console.print(f"[yellow]Warning:[/yellow] AI implementation failed")
+                console.print("[yellow]Warning:[/yellow] AI implementation failed")
         elif no_ai:
-            console.print(f"[blue]Info:[/blue] AI implementation skipped")
+            console.print("[blue]Info:[/blue] AI implementation skipped")
         
         # Show PR creation results
         if not no_pr and state.pr_number:
@@ -871,9 +859,9 @@ def process(
                 pr_url = f"https://github.com/{state.repository.full_name}/pull/{state.pr_number}"
                 console.print(f"  URL: {pr_url}")
         elif no_pr:
-            console.print(f"[blue]Info:[/blue] PR creation skipped")
+            console.print("[blue]Info:[/blue] PR creation skipped")
         
-        console.print(f"[green]✓[/green] Process workflow completed")
+        console.print("[green]✓[/green] Process workflow completed")
         
         if verbose:
             console.print(f"  State file: .auto/state/{identifier.issue_id}.yaml")
@@ -1042,8 +1030,8 @@ def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verb
         console.print(f"\n[bold]Found {len(issues_list)} {state} issue(s)[/bold]")
         
         if verbose:
-            console.print(f"[dim]Use 'auto fetch <issue-id>' to start working on an issue[/dim]")
-            console.print(f"[dim]Use 'auto issues --web' to view issues in browser[/dim]")
+            console.print("[dim]Use 'auto fetch <issue-id>' to start working on an issue[/dim]")
+            console.print("[dim]Use 'auto issues --web' to view issues in browser[/dim]")
         
     except Exception as e:
         console.print(f"[red]Error:[/red] Unexpected error: {e}")

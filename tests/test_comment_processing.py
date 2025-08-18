@@ -6,9 +6,7 @@ generation capabilities.
 """
 
 import pytest
-import asyncio
 from datetime import datetime
-from typing import List, Dict, Any
 from unittest.mock import Mock, AsyncMock, patch
 
 from auto.models import ReviewComment, Issue, AIResponse
@@ -21,7 +19,6 @@ from auto.workflows.review_comment import (
     CommentType,
     ProcessedComment,
     CommentResponse,
-    CommentThread,
     CommentProcessingResult,
     CommentHistory
 )

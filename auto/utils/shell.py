@@ -3,7 +3,7 @@
 import asyncio
 import subprocess
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Union
 
 from auto.utils.logger import get_logger
 

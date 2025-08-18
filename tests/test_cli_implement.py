@@ -3,7 +3,7 @@ Tests for Phase 3 CLI enhancements: implement command and enhanced process comma
 """
 
 import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, AsyncMock, patch
 from click.testing import CliRunner
 
 from auto.cli import implement, process
@@ -47,7 +47,10 @@ class TestImplementCommand:
         success_state = self.mock_state.model_copy()
         success_state.ai_status = AIStatus.IMPLEMENTED
         success_state.ai_response = Mock(success=True, file_changes=[], commands=[])
-        mock_implement.return_value = success_state
+        # Configure mock to be an async function that returns success_state
+        async def async_implement(*args, **kwargs):
+            return success_state
+        mock_implement.side_effect = async_implement
         
         result = self.runner.invoke(implement, ['123', '--no-pr'])
         
@@ -69,7 +72,7 @@ class TestImplementCommand:
         assert "No workflow state found" in result.output
     
     @patch('auto.cli.get_core')
-    @patch('auto.cli.get_issue_from_state')
+    @patch('auto.workflows.get_issue_from_state')
     def test_implement_no_issue_details(self, mock_get_issue, mock_get_core):
         """Test implement command with no issue details."""
         mock_core = Mock()
@@ -83,16 +86,16 @@ class TestImplementCommand:
         assert "Issue details not found" in result.output
     
     @patch('auto.cli.get_core')
-    @patch('auto.cli.get_issue_from_state')
-    @patch('auto.cli.validate_implementation_prerequisites')
-    def test_implement_prerequisites_not_met(self, mock_validate, mock_get_issue, mock_get_core):
+    @patch('auto.workflows.get_issue_from_state')
+    @patch('auto.workflows.validate_implementation_prerequisites')
+    def test_implement_prerequisites_not_met(self, mock_get_core, mock_get_issue, mock_validate):
         """Test implement command with prerequisites not met."""
         from auto.workflows.implement import ImplementationError
         
         mock_core = Mock()
         mock_get_core.return_value = mock_core
         mock_core.get_workflow_state.return_value = self.mock_state
-        mock_get_issue.return_value = self.mock_issue
+        mock_get_issue.return_value = self.mock_issue  # Return valid issue so it gets to prerequisites check
         mock_validate.side_effect = ImplementationError("Prerequisites not met")
         
         result = self.runner.invoke(implement, ['123'])
@@ -115,7 +118,10 @@ class TestImplementCommand:
         success_state = self.mock_state.model_copy()
         success_state.ai_status = AIStatus.IMPLEMENTED
         success_state.ai_response = Mock(success=True, file_changes=[], commands=[])
-        mock_implement.return_value = success_state
+        # Configure mock to be an async function that returns success_state
+        async def async_implement(*args, **kwargs):
+            return success_state
+        mock_implement.side_effect = async_implement
         
         result = self.runner.invoke(implement, [
             '123', 
@@ -149,8 +155,10 @@ class TestImplementCommand:
         mock_get_issue.return_value = self.mock_issue
         mock_validate.return_value = None
         
-        # Mock show prompt behavior
-        mock_implement.return_value = self.mock_state
+        # Mock show prompt behavior - needs to be async
+        async def async_implement(*args, **kwargs):
+            return self.mock_state
+        mock_implement.side_effect = async_implement
         
         result = self.runner.invoke(implement, ['123', '--show-prompt'])
         
@@ -163,10 +171,10 @@ class TestImplementCommand:
         assert call_args[1]['show_prompt'] is True
     
     @patch('auto.cli.get_core')
-    @patch('auto.cli.get_issue_from_state')
-    @patch('auto.cli.validate_implementation_prerequisites')
+    @patch('auto.workflows.get_issue_from_state')
+    @patch('auto.workflows.validate_implementation_prerequisites')
     @patch('auto.cli.get_config')
-    @patch('auto.cli.implement_issue_workflow')
+    @patch('auto.workflows.implement_issue_workflow')
     def test_implement_with_custom_agent(self, mock_implement, mock_get_config, mock_validate, mock_get_issue, mock_get_core):
         """Test implement command with custom agent."""
         mock_core = Mock()
@@ -175,6 +183,7 @@ class TestImplementCommand:
         mock_get_issue.return_value = self.mock_issue
         mock_validate.return_value = None
         
+        
         mock_config = Mock()
         mock_config.ai.implementation_agent = "default-agent"
         mock_get_config.return_value = mock_config
@@ -182,7 +191,10 @@ class TestImplementCommand:
         success_state = self.mock_state.model_copy()
         success_state.ai_status = AIStatus.IMPLEMENTED
         success_state.ai_response = Mock(success=True, file_changes=[], commands=[])
-        mock_implement.return_value = success_state
+        # Configure mock to be an async function that returns success_state
+        async def async_implement(*args, **kwargs):
+            return success_state
+        mock_implement.side_effect = async_implement
         
         result = self.runner.invoke(implement, ['123', '--agent', 'custom-agent', '--no-pr', '--verbose'])
         

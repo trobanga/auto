@@ -3,7 +3,7 @@
 import pytest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 from auto.models import (
     Issue, IssueProvider, IssueStatus, IssueType,

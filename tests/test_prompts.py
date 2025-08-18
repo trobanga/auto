@@ -3,7 +3,7 @@
 import pytest
 import yaml
 from pathlib import Path
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock, patch
 
 from auto.integrations.prompts import (
     PromptManager,

@@ -2,7 +2,6 @@
 
 from typing import Optional
 
-from auto.config import get_config
 from auto.core import get_core
 from auto.integrations.github import GitHubIntegration, GitHubIntegrationError
 from auto.models import Issue, IssueIdentifier, IssueProvider, WorkflowState, WorkflowStatus

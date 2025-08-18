@@ -5,17 +5,16 @@ This module provides sophisticated comment analysis, categorization, and AI-powe
 response generation for review feedback.
 """
 
-import asyncio
 import json
 import re
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple, Union
+from typing import List, Dict, Optional, Tuple
 
 from pydantic import BaseModel, Field
 
-from ..models import ReviewComment, Issue, AIResponse
+from ..models import ReviewComment, Issue
 from ..integrations.github import GitHubIntegration
 from ..integrations.ai import ClaudeIntegration
 from ..utils.logger import get_logger

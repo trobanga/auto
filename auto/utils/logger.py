@@ -1,7 +1,6 @@
 """Logging utilities for the auto tool."""
 
 import logging
-import sys
 from pathlib import Path
 from typing import Optional
 

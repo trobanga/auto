@@ -6,8 +6,6 @@ to ensure accuracy in categorization and priority assignment.
 """
 
 import pytest
-from datetime import datetime
-from auto.models import ReviewComment
 from auto.workflows.review_comment import (
     ReviewCommentProcessor,
     CommentCategory,

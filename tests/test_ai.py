@@ -3,9 +3,7 @@
 import asyncio
 import json
 import pytest
-import anyio
-from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, mock_open
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from auto.integrations.ai import (
     ClaudeIntegration,

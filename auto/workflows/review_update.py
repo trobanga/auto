@@ -6,24 +6,19 @@ through AI-powered analysis and automated code changes.
 """
 
 import asyncio
-import json
-import re
-from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import List, Dict, Optional, Any, Tuple, Union
+from typing import List, Dict, Optional
 
 from pydantic import BaseModel, Field
 
-from ..models import ReviewComment, Issue, AIResponse, WorktreeInfo
+from ..models import ReviewComment, Issue, AIResponse
 from ..integrations.github import GitHubIntegration
 from ..integrations.git import GitWorktreeManager
 from ..integrations.ai import ClaudeIntegration
 from ..utils.logger import get_logger
 from .review_comment import (
     ProcessedComment,
-    CommentResponse,
-    CommentThread,
     CommentProcessingResult,
     ReviewCommentProcessor
 )
@@ -663,7 +658,7 @@ class ReviewUpdateWorkflow:
                 # Stop batch execution if critical update fails
                 if (result.status == UpdateStatus.FAILED and 
                     update_plan.update_type in [UpdateType.CODE_FIX, UpdateType.SECURITY_FIX]):
-                    self.logger.warning(f"Critical update failed, stopping batch execution")
+                    self.logger.warning("Critical update failed, stopping batch execution")
                     break
             
             self.logger.info(f"Batch execution complete: {batch.batch_id}")
