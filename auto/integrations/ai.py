@@ -1358,10 +1358,13 @@ Please implement the necessary changes to address all valid review feedback."""
             Structured AIResponse
         """
         try:
+            # First, extract the actual result from Claude's streaming JSON output
+            extracted_output = self._extract_result_from_output(output)
+            
             # Try to parse as structured JSON first
-            if output.strip().startswith('{'):
+            if extracted_output.strip().startswith('{'):
                 try:
-                    data = json.loads(output)
+                    data = json.loads(extracted_output)
                     
                     # Use provided content or create summary
                     content = data.get('content')
@@ -1369,7 +1372,7 @@ Please implement the necessary changes to address all valid review feedback."""
                         # Create summary if content is missing or too long
                         file_changes = data.get('file_changes', [])
                         commands = data.get('commands', [])
-                        content = self._create_response_summary(output, response_type, file_changes, commands)
+                        content = self._create_response_summary(extracted_output, response_type, file_changes, commands)
                     
                     return AIResponse(
                         success=True,
@@ -1383,11 +1386,11 @@ Please implement the necessary changes to address all valid review feedback."""
                     pass
             
             # Parse freeform response
-            file_changes = self._extract_file_changes(output)
-            commands = self._extract_commands(output)
+            file_changes = self._extract_file_changes(extracted_output)
+            commands = self._extract_commands(extracted_output)
             
             # Create a summary instead of storing the entire output
-            summary = self._create_response_summary(output, response_type, file_changes, commands)
+            summary = self._create_response_summary(extracted_output, response_type, file_changes, commands)
             
             return AIResponse(
                 success=True,
@@ -1401,10 +1404,16 @@ Please implement the necessary changes to address all valid review feedback."""
         except Exception as e:
             self.logger.error(f"Failed to parse AI response: {e}")
             # Return basic response even if parsing fails
+            # In case of error, try to extract result from original output
+            try:
+                extracted_output = self._extract_result_from_output(output)
+            except:
+                extracted_output = output
+            
             return AIResponse(
                 success=False,
                 response_type=response_type,
-                content=output,
+                content=extracted_output,
                 file_changes=[],
                 commands=[],
                 metadata={"parse_error": str(e)}
