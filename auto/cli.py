@@ -53,6 +53,29 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
     
     Automates the complete workflow from issue to merged PR, including
     iterative review cycles with both AI and human reviewers.
+    
+    \b
+    Quick Start:
+        auto init                    # Initialize configuration
+        auto issues                  # List available issues
+        auto <issue-id>             # Complete workflow with review cycles
+    
+    \b
+    Examples:
+        auto 123                     # Process GitHub issue #123
+        auto ENG-456                # Process Linear issue ENG-456
+        auto review 123             # Review existing PR #123
+        auto config set ai.review_agent security-focused
+    
+    \b
+    Review Cycle Process:
+        1. AI reviews the PR and posts comments
+        2. Waits for human reviewer feedback
+        3. AI addresses review comments automatically
+        4. Repeats until PR is approved or max iterations reached
+        5. Merges PR after approval
+    
+    For more detailed help on any command, use: auto <command> --help
     """
     if version:
         click.echo(f"auto version {__version__}")
@@ -68,33 +91,100 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
 
 @cli.command()
 def init() -> None:
-    """Initialize auto configuration for the current project."""
+    """Initialize auto configuration for the current project.
+    
+    Creates default configuration files with sensible defaults for review cycles,
+    AI integration, and GitHub workflows. Run this in your project root directory.
+    
+    \b
+    This will create:
+        - ~/.auto/config.yaml (user-wide settings)
+        - <project>/.auto/config.yaml (project-specific settings)
+    
+    \b
+    Configuration includes:
+        - Review cycle settings (max iterations, check intervals)
+        - AI agent configuration (review, implementation, update)
+        - GitHub integration settings
+        - Workflow and branch naming patterns
+    """
     try:
         # Ensure user config exists
         user_config_path = Path.home() / ".auto" / "config.yaml"
         if not user_config_path.exists():
             config_manager.create_default_config(user_level=True)
             console.print(f"[green]✓[/green] User configuration created: {user_config_path}")
+        else:
+            console.print(f"[dim]User configuration already exists: {user_config_path}[/dim]")
         
         # Create project config
         project_config_path = config_manager.create_default_config(user_level=False)
         console.print(f"[green]✓[/green] Project configuration initialized: {project_config_path}")
         
+        # Show configuration summary
+        console.print("\n[bold]Configuration Summary:[/bold]")
+        console.print("• Review cycles: [cyan]10 max iterations[/cyan], [cyan]60s check interval[/cyan]")
+        console.print("• AI agents: [cyan]pull-request-reviewer[/cyan] for reviews, [cyan]coder[/cyan] for updates")
+        console.print("• Branch naming: [cyan]auto/{type}/{id}[/cyan]")
+        console.print("• Human approval: [cyan]required[/cyan]")
+        
         # Show next steps
-        console.print("\n[bold]Next steps:[/bold]")
-        console.print("1. Edit the project configuration file to customize settings")
-        console.print("2. Set up GitHub CLI: [cyan]gh auth login[/cyan]")
-        console.print("3. Configure AI agent: [cyan]auto config set ai.command claude[/cyan]")
-        console.print("4. Run [cyan]auto --help[/cyan] to see available commands")
+        console.print("\n[bold]Next Steps:[/bold]")
+        console.print("1. [cyan]gh auth login[/cyan] - Authenticate with GitHub")
+        console.print("2. [cyan]auto config show[/cyan] - Review configuration")
+        console.print("3. [cyan]auto issues[/cyan] - List available issues")
+        console.print("4. [cyan]auto <issue-id>[/cyan] - Start your first automated workflow")
+        
+        console.print("\n[bold]Customization:[/bold]")
+        console.print(f"Edit [cyan]{project_config_path}[/cyan] to customize project settings")
+        console.print("Use [cyan]auto config set <key> <value>[/cyan] to change specific values")
+        
+        # Validation check
+        try:
+            config = get_config()
+            console.print("\n[green]✓[/green] Configuration validation passed")
+        except Exception as e:
+            console.print(f"\n[yellow]⚠[/yellow] Configuration validation warning: {e}")
+            console.print("[dim]This may not affect basic functionality[/dim]")
         
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]✗ Configuration Error:[/red] {e}")
+        console.print("\n[bold]Troubleshooting:[/bold]")
+        console.print("• Check that you have write permissions in the current directory")
+        console.print("• Ensure you're in a git repository (run [cyan]git init[/cyan] if needed)")
+        console.print("• Verify your home directory is accessible")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]✗ Unexpected Error:[/red] {e}")
+        console.print("\n[bold]Please report this issue:[/bold]")
+        console.print("https://github.com/anthropics/claude-code/issues")
         sys.exit(1)
 
 
 @cli.group()
 def config() -> None:
-    """Configuration management."""
+    """Configuration management for auto tool.
+    
+    Manage user and project-level configuration including review cycle settings,
+    AI agent configuration, GitHub integration, and workflow preferences.
+    
+    \b
+    Common Configuration Keys:
+        workflows.max_review_iterations    # Maximum review cycle iterations (1-50)
+        workflows.review_check_interval    # How often to check for reviews (seconds)
+        ai.review_agent                    # AI agent for PR reviews
+        ai.update_agent                    # AI agent for addressing comments
+        ai.review_prompt                   # Custom review prompt template
+        github.default_reviewer            # Default human reviewer
+        github.pr_template                 # PR template file path
+    
+    \b
+    Examples:
+        auto config show                           # Show current configuration
+        auto config get ai.review_agent           # Get specific value
+        auto config set workflows.max_review_iterations 15
+        auto config set ai.review_agent security-focused --project
+    """
     pass
 
 
@@ -103,14 +193,51 @@ def config() -> None:
 def config_get(key: str) -> None:
     """Get configuration value by key.
     
-    KEY: Dot-separated configuration key (e.g., 'github.token', 'ai.command')
+    Retrieves a configuration value using dot-separated notation.
+    Values are resolved with project config taking precedence over user config.
+    
+    \b
+    KEY: Dot-separated configuration key
+    
+    \b
+    Examples:
+        auto config get ai.review_agent
+        auto config get workflows.max_review_iterations
+        auto config get github.default_reviewer
+    
+    \b
+    Available Sections:
+        workflows.*    # Review and workflow settings
+        ai.*          # AI agent and prompt configuration
+        github.*      # GitHub integration settings
+        linear.*      # Linear integration settings
+        defaults.*    # Default behavior settings
     """
     try:
         value = config_manager.get_config_value(key)
-        console.print(f"{key}: {value}")
+        
+        # Format the output nicely
+        if isinstance(value, bool):
+            value_str = f"[cyan]{value}[/cyan]"
+        elif isinstance(value, (int, float)):
+            value_str = f"[yellow]{value}[/yellow]"
+        elif isinstance(value, str):
+            value_str = f"[green]'{value}'[/green]"
+        else:
+            value_str = str(value)
+        
+        console.print(f"[bold]{key}:[/bold] {value_str}")
         
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]✗ Configuration Error:[/red] {e}")
+        console.print(f"\n[bold]Available sections:[/bold]")
+        try:
+            config = get_config()
+            sections = list(config.model_dump().keys())
+            console.print(f"[dim]{', '.join(sections)}[/dim]")
+        except:
+            pass
+        console.print(f"\n[bold]Tip:[/bold] Use [cyan]auto config show[/cyan] to see all available keys")
         sys.exit(1)
 
 
@@ -124,8 +251,30 @@ def config_get(key: str) -> None:
 def config_set(key: str, value: str, project: bool) -> None:
     """Set configuration value.
     
-    KEY: Dot-separated configuration key (e.g., 'github.token', 'ai.command')
-    VALUE: Value to set
+    Sets a configuration value using dot-separated notation.
+    Values are automatically parsed to appropriate types (bool, int, float, string).
+    
+    \b
+    KEY: Dot-separated configuration key
+    VALUE: Value to set (auto-parsed to correct type)
+    
+    \b
+    Type Conversion:
+        'true'/'false' → boolean
+        Numbers → int or float
+        Everything else → string
+    
+    \b
+    Examples:
+        auto config set workflows.max_review_iterations 15
+        auto config set ai.review_agent security-focused
+        auto config set workflows.require_human_approval true
+        auto config set ai.review_prompt "Custom review prompt"
+    
+    \b
+    Scope:
+        --project    Save to project config (.auto/config.yaml)
+        (default)    Save to user config (~/.auto/config.yaml)
     """
     try:
         # Convert string values to appropriate types
@@ -140,13 +289,57 @@ def config_set(key: str, value: str, project: bool) -> None:
             except ValueError:
                 parsed_value = value
         
+        # Validate the change by attempting to apply it
+        try:
+            config = get_config()
+            # Create a test config to validate the change
+            test_config_dict = config.model_dump()
+            
+            # Navigate to the key and set the value for validation
+            keys = key.split(".")
+            current = test_config_dict
+            for k in keys[:-1]:
+                if k not in current:
+                    current[k] = {}
+                current = current[k]
+            current[keys[-1]] = parsed_value
+            
+            # Validate the configuration
+            from auto.models import Config
+            Config.model_validate(test_config_dict)
+            
+        except Exception as validation_error:
+            console.print(f"[red]✗ Validation Error:[/red] {validation_error}")
+            console.print(f"\n[bold]Tip:[/bold] Check the value format and valid ranges")
+            sys.exit(1)
+        
         config_manager.set_config_value(key, parsed_value, user_level=not project)
         
         config_type = "project" if project else "user"
-        console.print(f"[green]✓[/green] {config_type.title()} config updated: {key} = {parsed_value}")
+        
+        # Format value for display
+        if isinstance(parsed_value, bool):
+            display_value = f"[cyan]{parsed_value}[/cyan]"
+        elif isinstance(parsed_value, (int, float)):
+            display_value = f"[yellow]{parsed_value}[/yellow]"
+        else:
+            display_value = f"[green]'{parsed_value}'[/green]"
+        
+        console.print(f"[green]✓[/green] {config_type.title()} config updated: [bold]{key}[/bold] = {display_value}")
+        
+        # Show config file path
+        config_files = config_manager.list_config_files()
+        file_key = "project" if project else "user"
+        if config_files[file_key]:
+            console.print(f"[dim]Saved to: {config_files[file_key]}[/dim]")
         
     except ConfigError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        console.print(f"[red]✗ Configuration Error:[/red] {e}")
+        console.print(f"\n[bold]Troubleshooting:[/bold]")
+        console.print("• Check that the configuration key exists")
+        console.print("• Verify the value format is correct")
+        console.print("• Ensure you have write permissions to the config file")
+        console.print(f"• Use [cyan]auto config show[/cyan] to see valid keys")
         sys.exit(1)
 
 
