@@ -1,31 +1,41 @@
 """Tests for PR creation workflow."""
 
-import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+from auto.models import (
+    AIResponse,
+    AIStatus,
+    Issue,
+    IssueProvider,
+    IssueStatus,
+    IssueType,
+    PRMetadata,
+    PRStatus,
+    PullRequest,
+    WorkflowState,
+    WorkflowStatus,
+)
 from auto.workflows.pr_create import (
+    PRCreationError,
+    commit_implementation_changes,
+    create_github_pr,
     create_pull_request_workflow,
+    determine_pr_assignees,
+    determine_pr_labels,
+    determine_pr_reviewers,
+    generate_commit_message,
+    generate_pr_description,
     generate_pr_metadata,
     generate_pr_title,
-    generate_pr_description,
-    load_pr_template,
-    determine_pr_labels,
-    determine_pr_assignees,
-    determine_pr_reviewers,
-    commit_implementation_changes,
-    generate_commit_message,
-    push_branch_to_remote,
-    create_github_pr,
-    validate_pr_prerequisites,
-    has_uncommitted_changes,
-    has_implementation_commits,
     get_pr_creation_summary,
-    PRCreationError
-)
-from auto.models import (
-    Issue, IssueProvider, IssueStatus, IssueType, WorkflowState, WorkflowStatus,
-    AIStatus, AIResponse, PRMetadata, PullRequest, PRStatus
+    has_implementation_commits,
+    has_uncommitted_changes,
+    load_pr_template,
+    push_branch_to_remote,
+    validate_pr_prerequisites,
 )
 
 
@@ -40,7 +50,7 @@ def sample_issue():
         status=IssueStatus.OPEN,
         issue_type=IssueType.FEATURE,
         labels=["feature", "ui"],
-        assignee="developer"
+        assignee="developer",
     )
 
 
@@ -50,7 +60,7 @@ def workflow_state(tmp_path):
     worktree_path = str(tmp_path / "worktree")
     Path(worktree_path).mkdir()
     (Path(worktree_path) / ".git").mkdir()
-    
+
     return WorkflowState(
         issue_id="#123",
         branch="auto/feature/123",
@@ -63,11 +73,11 @@ def workflow_state(tmp_path):
             content="Implementation completed successfully",
             file_changes=[
                 {"action": "created", "path": "src/DarkMode.tsx"},
-                {"action": "modified", "path": "src/App.tsx"}
+                {"action": "modified", "path": "src/App.tsx"},
             ],
             commands=["npm test"],
-            metadata={}
-        )
+            metadata={},
+        ),
     )
 
 
@@ -95,22 +105,27 @@ class TestCreatePullRequestWorkflow:
             description="PR description",
             status=PRStatus.OPEN,
             branch="auto/feature/123",
-            url="https://github.com/owner/repo/pull/456"
+            url="https://github.com/owner/repo/pull/456",
         )
-        
-        with patch('auto.workflows.pr_create.validate_pr_prerequisites'), \
-             patch('auto.workflows.pr_create.Config', return_value=mock_config), \
-             patch('auto.workflows.pr_create.has_uncommitted_changes', return_value=True), \
-             patch('auto.workflows.pr_create.commit_implementation_changes', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.push_branch_to_remote', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.GitHubIntegration') as mock_github_class, \
-             patch('auto.workflows.pr_create.create_github_pr', new_callable=AsyncMock, return_value=mock_pr):
-            
+
+        with (
+            patch("auto.workflows.pr_create.validate_pr_prerequisites"),
+            patch("auto.workflows.pr_create.Config", return_value=mock_config),
+            patch("auto.workflows.pr_create.has_uncommitted_changes", return_value=True),
+            patch("auto.workflows.pr_create.commit_implementation_changes", new_callable=AsyncMock),
+            patch("auto.workflows.pr_create.push_branch_to_remote", new_callable=AsyncMock),
+            patch("auto.workflows.pr_create.GitHubIntegration") as mock_github_class,
+            patch(
+                "auto.workflows.pr_create.create_github_pr",
+                new_callable=AsyncMock,
+                return_value=mock_pr,
+            ),
+        ):
             mock_github = MagicMock()
             mock_github_class.return_value = mock_github
-            
+
             result = await create_pull_request_workflow(sample_issue, workflow_state)
-            
+
             # Verify state updates
             assert result.pr_number == 456
             assert result.status == WorkflowStatus.IN_REVIEW
@@ -120,14 +135,15 @@ class TestCreatePullRequestWorkflow:
     @pytest.mark.anyio
     async def test_no_changes_error(self, sample_issue, workflow_state, mock_config):
         """Test error when no changes to commit."""
-        with patch('auto.workflows.pr_create.validate_pr_prerequisites'), \
-             patch('auto.workflows.pr_create.Config', return_value=mock_config), \
-             patch('auto.workflows.pr_create.has_uncommitted_changes', return_value=False), \
-             patch('auto.workflows.pr_create.has_implementation_commits', return_value=False):
-            
+        with (
+            patch("auto.workflows.pr_create.validate_pr_prerequisites"),
+            patch("auto.workflows.pr_create.Config", return_value=mock_config),
+            patch("auto.workflows.pr_create.has_uncommitted_changes", return_value=False),
+            patch("auto.workflows.pr_create.has_implementation_commits", return_value=False),
+        ):
             with pytest.raises(PRCreationError) as excinfo:
                 await create_pull_request_workflow(sample_issue, workflow_state)
-            
+
             assert "No implementation changes found" in str(excinfo.value)
 
     @pytest.mark.anyio
@@ -139,41 +155,46 @@ class TestCreatePullRequestWorkflow:
             description="PR description",
             status=PRStatus.DRAFT,
             branch="auto/feature/123",
-            url="https://github.com/owner/repo/pull/456"
+            url="https://github.com/owner/repo/pull/456",
         )
-        
-        with patch('auto.workflows.pr_create.validate_pr_prerequisites'), \
-             patch('auto.workflows.pr_create.Config', return_value=mock_config), \
-             patch('auto.workflows.pr_create.has_uncommitted_changes', return_value=True), \
-             patch('auto.workflows.pr_create.commit_implementation_changes', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.push_branch_to_remote', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.GitHubIntegration'), \
-             patch('auto.workflows.pr_create.create_github_pr', new_callable=AsyncMock, return_value=mock_pr):
-            
-            result = await create_pull_request_workflow(
-                sample_issue, 
-                workflow_state, 
-                draft=True
-            )
-            
+
+        with (
+            patch("auto.workflows.pr_create.validate_pr_prerequisites"),
+            patch("auto.workflows.pr_create.Config", return_value=mock_config),
+            patch("auto.workflows.pr_create.has_uncommitted_changes", return_value=True),
+            patch("auto.workflows.pr_create.commit_implementation_changes", new_callable=AsyncMock),
+            patch("auto.workflows.pr_create.push_branch_to_remote", new_callable=AsyncMock),
+            patch("auto.workflows.pr_create.GitHubIntegration"),
+            patch(
+                "auto.workflows.pr_create.create_github_pr",
+                new_callable=AsyncMock,
+                return_value=mock_pr,
+            ),
+        ):
+            result = await create_pull_request_workflow(sample_issue, workflow_state, draft=True)
+
             assert result.pr_metadata.draft is True
 
     @pytest.mark.anyio
     async def test_pr_creation_failure(self, sample_issue, workflow_state, mock_config):
         """Test handling of PR creation failure."""
         from auto.integrations.github import GitHubError
-        
-        with patch('auto.workflows.pr_create.validate_pr_prerequisites'), \
-             patch('auto.workflows.pr_create.Config', return_value=mock_config), \
-             patch('auto.workflows.pr_create.has_uncommitted_changes', return_value=True), \
-             patch('auto.workflows.pr_create.commit_implementation_changes', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.push_branch_to_remote', new_callable=AsyncMock), \
-             patch('auto.workflows.pr_create.create_github_pr', new_callable=AsyncMock, 
-                   side_effect=GitHubError("API error")):
-            
+
+        with (
+            patch("auto.workflows.pr_create.validate_pr_prerequisites"),
+            patch("auto.workflows.pr_create.Config", return_value=mock_config),
+            patch("auto.workflows.pr_create.has_uncommitted_changes", return_value=True),
+            patch("auto.workflows.pr_create.commit_implementation_changes", new_callable=AsyncMock),
+            patch("auto.workflows.pr_create.push_branch_to_remote", new_callable=AsyncMock),
+            patch(
+                "auto.workflows.pr_create.create_github_pr",
+                new_callable=AsyncMock,
+                side_effect=GitHubError("API error"),
+            ),
+        ):
             with pytest.raises(PRCreationError) as excinfo:
                 await create_pull_request_workflow(sample_issue, workflow_state)
-            
+
             assert "GitHub PR creation failed" in str(excinfo.value)
             assert workflow_state.status == WorkflowStatus.FAILED
 
@@ -185,7 +206,7 @@ class TestGeneratePRMetadata:
     async def test_generate_pr_metadata(self, sample_issue, workflow_state, mock_config):
         """Test PR metadata generation."""
         metadata = await generate_pr_metadata(sample_issue, workflow_state, mock_config)
-        
+
         assert metadata.title == "feat: Add dark mode support"
         assert "Closes #123" in metadata.description
         assert "Implemented: Add dark mode support" in metadata.description
@@ -199,7 +220,7 @@ class TestGeneratePRMetadata:
     async def test_generate_pr_metadata_draft(self, sample_issue, workflow_state, mock_config):
         """Test PR metadata generation for draft."""
         metadata = await generate_pr_metadata(sample_issue, workflow_state, mock_config, draft=True)
-        
+
         assert metadata.draft is True
 
 
@@ -214,11 +235,11 @@ class TestGeneratePRTitle:
             title="Add dark mode support",
             description="Description",
             status=IssueStatus.OPEN,
-            issue_type=IssueType.FEATURE
+            issue_type=IssueType.FEATURE,
         )
-        
+
         title = generate_pr_title(issue, mock_config)
-        
+
         assert title == "feat: Add dark mode support"
 
     def test_generate_title_with_bug_type(self, mock_config):
@@ -229,11 +250,11 @@ class TestGeneratePRTitle:
             title="Fix login error",
             description="Description",
             status=IssueStatus.OPEN,
-            issue_type=IssueType.BUG
+            issue_type=IssueType.BUG,
         )
-        
+
         title = generate_pr_title(issue, mock_config)
-        
+
         assert title == "fix: Fix login error"
 
     def test_generate_title_no_type(self, mock_config):
@@ -243,11 +264,11 @@ class TestGeneratePRTitle:
             provider=IssueProvider.GITHUB,
             title="Update documentation",
             description="Description",
-            status=IssueStatus.OPEN
+            status=IssueStatus.OPEN,
         )
-        
+
         title = generate_pr_title(issue, mock_config)
-        
+
         assert title == "Update documentation"
 
 
@@ -255,7 +276,9 @@ class TestGeneratePRDescription:
     """Test generate_pr_description function."""
 
     @pytest.mark.asyncio
-    async def test_generate_description_with_template(self, sample_issue, workflow_state, mock_config):
+    async def test_generate_description_with_template(
+        self, sample_issue, workflow_state, mock_config
+    ):
         """Test PR description generation with Claude AI success."""
         mock_claude_description = """## Template
 Template content
@@ -266,14 +289,14 @@ Implemented dark mode support feature
 ## Changes
 - Added new component for theme switching
 - Updated existing components for dark mode compatibility"""
-        
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_claude_class:
+
+        with patch("auto.integrations.ai.ClaudeIntegration") as mock_claude_class:
             mock_claude = AsyncMock()
             mock_claude.generate_pr_description.return_value = mock_claude_description
             mock_claude_class.return_value = mock_claude
-            
+
             description = await generate_pr_description(sample_issue, workflow_state, mock_config)
-            
+
             assert "## Template" in description
             assert "Template content" in description
             assert "Closes #123" in description
@@ -281,15 +304,17 @@ Implemented dark mode support feature
             assert "`npm test`" in description
 
     @pytest.mark.asyncio
-    async def test_generate_description_without_template(self, sample_issue, workflow_state, mock_config):
+    async def test_generate_description_without_template(
+        self, sample_issue, workflow_state, mock_config
+    ):
         """Test PR description generation with Claude AI failure (fallback)."""
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_claude_class:
+        with patch("auto.integrations.ai.ClaudeIntegration") as mock_claude_class:
             mock_claude = AsyncMock()
             mock_claude.generate_pr_description.side_effect = Exception("Claude CLI not found")
             mock_claude_class.return_value = mock_claude
-            
+
             description = await generate_pr_description(sample_issue, workflow_state, mock_config)
-            
+
             # Should use fallback description format
             assert "## Summary" in description
             assert "Closes #123" in description
@@ -301,19 +326,17 @@ Implemented dark mode support feature
     async def test_generate_description_no_ai_response(self, sample_issue, mock_config):
         """Test PR description generation without AI response."""
         workflow_state = WorkflowState(
-            issue_id="#123",
-            branch="auto/feature/123",
-            status=WorkflowStatus.IMPLEMENTING
+            issue_id="#123", branch="auto/feature/123", status=WorkflowStatus.IMPLEMENTING
         )
-        
-        with patch('auto.workflows.pr_create.load_pr_template', return_value=None):
-            
+
+        with patch("auto.workflows.pr_create.load_pr_template", return_value=None):
             description = await generate_pr_description(sample_issue, workflow_state, mock_config)
-            
+
             assert "Closes #123" in description
-            assert "## Testing" in description
-            # Should not contain implementation summary
+            assert "Implemented: Add dark mode support" in description
+            # Should not contain implementation summary or testing section (fallback is basic)
             assert "## Implementation Summary" not in description
+            assert "## Testing" not in description
 
 
 class TestLoadPRTemplate:
@@ -324,19 +347,19 @@ class TestLoadPRTemplate:
         template_path = tmp_path / "template.md"
         template_content = "## Description\nPlease describe your changes"
         template_path.write_text(template_content)
-        
+
         mock_config.github.pr_template = str(template_path)
-        
+
         result = load_pr_template(mock_config)
-        
+
         assert result == template_content
 
     def test_load_nonexistent_template(self, mock_config):
         """Test loading non-existent PR template."""
         mock_config.github.pr_template = "/nonexistent/template.md"
-        
+
         result = load_pr_template(mock_config)
-        
+
         assert result is None
 
 
@@ -348,11 +371,11 @@ class TestDeterminePRLabels:
         workflow_state.ai_response.file_changes = [
             {"action": "created", "path": "src/component.tsx"},
             {"action": "modified", "path": "tests/component.test.ts"},
-            {"action": "created", "path": "docs/README.md"}
+            {"action": "created", "path": "docs/README.md"},
         ]
-        
+
         labels = determine_pr_labels(sample_issue, workflow_state)
-        
+
         assert "feature" in labels
         assert "ui" in labels
         assert "ai-implemented" in labels
@@ -362,13 +385,11 @@ class TestDeterminePRLabels:
     def test_determine_labels_without_ai_response(self, sample_issue):
         """Test label determination without AI response."""
         workflow_state = WorkflowState(
-            issue_id="#123",
-            branch="auto/feature/123",
-            status=WorkflowStatus.IMPLEMENTING
+            issue_id="#123", branch="auto/feature/123", status=WorkflowStatus.IMPLEMENTING
         )
-        
+
         labels = determine_pr_labels(sample_issue, workflow_state)
-        
+
         assert "feature" in labels
         assert "ui" in labels
         assert "ai-implemented" not in labels
@@ -380,13 +401,13 @@ class TestDeterminePRAssigneesAndReviewers:
     def test_determine_assignees(self, sample_issue, mock_config):
         """Test assignee determination."""
         assignees = determine_pr_assignees(sample_issue, mock_config)
-        
+
         assert "developer" in assignees
 
     def test_determine_reviewers(self, sample_issue, mock_config):
         """Test reviewer determination."""
         reviewers = determine_pr_reviewers(sample_issue, mock_config)
-        
+
         assert "reviewer1" in reviewers
 
     def test_determine_assignees_no_assignee(self, mock_config):
@@ -396,11 +417,11 @@ class TestDeterminePRAssigneesAndReviewers:
             provider=IssueProvider.GITHUB,
             title="Test issue",
             description="Description",
-            status=IssueStatus.OPEN
+            status=IssueStatus.OPEN,
         )
-        
+
         assignees = determine_pr_assignees(issue, mock_config)
-        
+
         assert len(assignees) == 0
 
 
@@ -410,15 +431,17 @@ class TestCommitImplementationChanges:
     @pytest.mark.anyio
     async def test_successful_commit(self, sample_issue, workflow_state, mock_config):
         """Test successful commit of implementation changes."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             # Mock successful git add
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="", stderr=""),  # git add
-                MagicMock(returncode=0, stdout="[main abc123] commit message", stderr="")  # git commit
+                MagicMock(
+                    returncode=0, stdout="[main abc123] commit message", stderr=""
+                ),  # git commit
             ]
-            
+
             await commit_implementation_changes(sample_issue, workflow_state, mock_config)
-            
+
             # Verify git commands were called
             assert mock_run.call_count == 2
             mock_run.assert_any_call(
@@ -426,33 +449,33 @@ class TestCommitImplementationChanges:
                 cwd=workflow_state.worktree,
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=30,
             )
 
     @pytest.mark.anyio
     async def test_commit_nothing_to_commit(self, sample_issue, workflow_state, mock_config):
         """Test commit when nothing to commit."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="", stderr=""),  # git add
-                MagicMock(returncode=1, stdout="nothing to commit", stderr="")  # git commit
+                MagicMock(returncode=1, stdout="nothing to commit", stderr=""),  # git commit
             ]
-            
+
             # Should not raise
             await commit_implementation_changes(sample_issue, workflow_state, mock_config)
 
     @pytest.mark.anyio
     async def test_commit_failure(self, sample_issue, workflow_state, mock_config):
         """Test commit failure handling."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
                 MagicMock(returncode=0, stdout="", stderr=""),  # git add
-                MagicMock(returncode=1, stdout="", stderr="commit failed")  # git commit
+                MagicMock(returncode=1, stdout="", stderr="commit failed"),  # git commit
             ]
-            
+
             with pytest.raises(PRCreationError) as excinfo:
                 await commit_implementation_changes(sample_issue, workflow_state, mock_config)
-            
+
             assert "Failed to commit changes" in str(excinfo.value)
 
 
@@ -462,16 +485,16 @@ class TestGenerateCommitMessage:
     def test_generate_commit_message_with_template(self, sample_issue, workflow_state, mock_config):
         """Test commit message generation with template."""
         message = generate_commit_message(sample_issue, workflow_state, mock_config)
-        
+
         assert message == "feat: implement #123 - Add dark mode support"
 
     def test_generate_commit_message_template_error(self, sample_issue, workflow_state):
         """Test commit message generation with template error."""
         config = MagicMock()
         config.workflows.implementation_commit_message = "Invalid {unknown_var}"
-        
+
         message = generate_commit_message(sample_issue, workflow_state, config)
-        
+
         # Should fallback to simple message
         assert message == "Implement #123: Add dark mode support"
 
@@ -482,28 +505,28 @@ class TestPushBranchToRemote:
     @pytest.mark.anyio
     async def test_successful_push(self, workflow_state):
         """Test successful branch push."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
-            
+
             await push_branch_to_remote(workflow_state)
-            
+
             mock_run.assert_called_once_with(
                 ["git", "push", "-u", "origin", workflow_state.branch],
                 cwd=workflow_state.worktree,
                 capture_output=True,
                 text=True,
-                timeout=60
+                timeout=60,
             )
 
     @pytest.mark.anyio
     async def test_push_failure(self, workflow_state):
         """Test push failure handling."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="push failed")
-            
+
             with pytest.raises(PRCreationError) as excinfo:
                 await push_branch_to_remote(workflow_state)
-            
+
             assert "Failed to push branch" in str(excinfo.value)
 
 
@@ -520,24 +543,24 @@ class TestCreateGitHubPR:
             description="Description",
             status=PRStatus.OPEN,
             branch="auto/feature/123",
-            url="https://github.com/owner/repo/pull/456"
+            url="https://github.com/owner/repo/pull/456",
         )
         mock_github.create_pull_request = AsyncMock(return_value=mock_pr)
         mock_github.add_pr_labels = AsyncMock()
         mock_github.add_pr_assignees = AsyncMock()
         mock_github.request_pr_reviewers = AsyncMock()
-        
+
         pr_metadata = PRMetadata(
             title="Test PR",
             description="Description",
             labels=["feature"],
             assignees=["dev"],
             reviewers=["reviewer"],
-            draft=False
+            draft=False,
         )
-        
+
         result = await create_github_pr(mock_github, pr_metadata, workflow_state)
-        
+
         assert result == mock_pr
         mock_github.create_pull_request.assert_called_once()
         mock_github.add_pr_labels.assert_called_once_with(456, ["feature"])
@@ -559,12 +582,12 @@ class TestValidatePRPrerequisites:
             issue_id="#123",
             branch="auto/feature/123",
             worktree=None,
-            status=WorkflowStatus.IMPLEMENTING
+            status=WorkflowStatus.IMPLEMENTING,
         )
-        
+
         with pytest.raises(PRCreationError) as excinfo:
             validate_pr_prerequisites(workflow_state)
-        
+
         assert "No worktree available" in str(excinfo.value)
 
     def test_no_branch(self, tmp_path):
@@ -572,17 +595,14 @@ class TestValidatePRPrerequisites:
         worktree_path = str(tmp_path / "worktree")
         Path(worktree_path).mkdir()
         (Path(worktree_path) / ".git").mkdir()
-        
+
         workflow_state = WorkflowState(
-            issue_id="#123",
-            branch=None,
-            worktree=worktree_path,
-            status=WorkflowStatus.IMPLEMENTING
+            issue_id="#123", branch=None, worktree=worktree_path, status=WorkflowStatus.IMPLEMENTING
         )
-        
+
         with pytest.raises(PRCreationError) as excinfo:
             validate_pr_prerequisites(workflow_state)
-        
+
         assert "No branch specified" in str(excinfo.value)
 
 
@@ -591,38 +611,38 @@ class TestUtilityFunctions:
 
     def test_has_uncommitted_changes_true(self, tmp_path):
         """Test has_uncommitted_changes when changes exist."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="M  file1.txt\n")
-            
+
             result = has_uncommitted_changes(str(tmp_path))
-            
+
             assert result is True
 
     def test_has_uncommitted_changes_false(self, tmp_path):
         """Test has_uncommitted_changes when no changes."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="")
-            
+
             result = has_uncommitted_changes(str(tmp_path))
-            
+
             assert result is False
 
     def test_has_implementation_commits_true(self, tmp_path):
         """Test has_implementation_commits when commits exist."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="3\n")
-            
+
             result = has_implementation_commits(str(tmp_path), "feature-branch")
-            
+
             assert result is True
 
     def test_has_implementation_commits_false(self, tmp_path):
         """Test has_implementation_commits when no commits."""
-        with patch('subprocess.run') as mock_run:
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(returncode=0, stdout="0\n")
-            
+
             result = has_implementation_commits(str(tmp_path), "feature-branch")
-            
+
             assert result is False
 
     def test_get_pr_creation_summary(self, workflow_state):
@@ -634,22 +654,19 @@ class TestUtilityFunctions:
             labels=["feature", "ui"],
             assignees=["dev"],
             reviewers=["reviewer1", "reviewer2"],
-            draft=False
+            draft=False,
         )
-        
+
         summary = get_pr_creation_summary(workflow_state)
-        
+
         assert "PR #456 created" in summary
         assert "with 2 labels" in summary
         assert "and 2 reviewers" in summary
 
     def test_get_pr_creation_summary_no_pr(self):
         """Test PR creation summary when no PR created."""
-        workflow_state = WorkflowState(
-            issue_id="#123",
-            status=WorkflowStatus.IMPLEMENTING
-        )
-        
+        workflow_state = WorkflowState(issue_id="#123", status=WorkflowStatus.IMPLEMENTING)
+
         summary = get_pr_creation_summary(workflow_state)
-        
+
         assert summary == "PR not created yet"

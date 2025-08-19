@@ -1,0 +1,5 @@
+{
+  "hooks": {
+    "post-tool": ".claude/hooks/post-tool.sh"
+  }
+}

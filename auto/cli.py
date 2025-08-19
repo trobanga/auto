@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Any
 
 import click
 from rich.console import Console
@@ -14,33 +14,33 @@ from auto.core import get_core
 from auto.models import IssueIdentifier
 from auto.utils.logger import get_logger
 from auto.utils.shell import run_command
-from auto.workflows.fetch import (
-    fetch_issue_workflow_sync, validate_issue_access
-)
+from auto.workflows.fetch import fetch_issue_workflow_sync, validate_issue_access
 
 logger = get_logger(__name__)
 console = Console()
 
 
-
 def enable_verbose_logging() -> None:
     """Enable debug logging for both logger and console handler."""
     import logging
+
     from rich.logging import RichHandler
-    
+
     auto_logger = logging.getLogger("auto")
     auto_logger.setLevel(logging.DEBUG)
-    
+
     # Also set all child loggers to DEBUG level
     for name, child_logger in logging.Logger.manager.loggerDict.items():
         if isinstance(child_logger, logging.Logger) and name.startswith("auto"):
             child_logger.setLevel(logging.DEBUG)
-    
+
     # Also set console handler to DEBUG level
     for handler in auto_logger.handlers:
-        if isinstance(handler, (RichHandler, logging.StreamHandler)) and not isinstance(handler, logging.FileHandler):
+        if isinstance(handler, RichHandler | logging.StreamHandler) and not isinstance(
+            handler, logging.FileHandler
+        ):
             handler.setLevel(logging.DEBUG)
-    
+
     logger.debug("Verbose logging enabled")
 
 
@@ -50,23 +50,23 @@ def enable_verbose_logging() -> None:
 @click.pass_context
 def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
     """Auto - Automatic User Task Orchestrator.
-    
+
     Automates the complete workflow from issue to merged PR, including
     iterative review cycles with both AI and human reviewers.
-    
+
     \b
     Quick Start:
         auto init                    # Initialize configuration
         auto issues                  # List available issues
         auto <issue-id>             # Complete workflow with review cycles
-    
+
     \b
     Examples:
         auto 123                     # Process GitHub issue #123
         auto ENG-456                # Process Linear issue ENG-456
         auto review 123             # Review existing PR #123
         auto config set ai.review_agent security-focused
-    
+
     \b
     Review Cycle Process:
         1. AI reviews the PR and posts comments
@@ -74,16 +74,16 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
         3. AI addresses review comments automatically
         4. Repeats until PR is approved or max iterations reached
         5. Merges PR after approval
-    
+
     For more detailed help on any command, use: auto <command> --help
     """
     if version:
         click.echo(f"auto version {__version__}")
         sys.exit(0)
-    
+
     if verbose:
         enable_verbose_logging()
-    
+
     # If no subcommand and no flags, show help
     if ctx.invoked_subcommand is None and not version:
         click.echo(ctx.get_help())
@@ -92,15 +92,15 @@ def cli(ctx: click.Context, version: bool, verbose: bool) -> None:
 @cli.command()
 def init() -> None:
     """Initialize auto configuration for the current project.
-    
+
     Creates default configuration files with sensible defaults for review cycles,
     AI integration, and GitHub workflows. Run this in your project root directory.
-    
+
     \b
     This will create:
         - ~/.auto/config.yaml (user-wide settings)
         - <project>/.auto/config.yaml (project-specific settings)
-    
+
     \b
     Configuration includes:
         - Review cycle settings (max iterations, check intervals)
@@ -116,37 +116,41 @@ def init() -> None:
             console.print(f"[green]✓[/green] User configuration created: {user_config_path}")
         else:
             console.print(f"[dim]User configuration already exists: {user_config_path}[/dim]")
-        
+
         # Create project config
         project_config_path = config_manager.create_default_config(user_level=False)
         console.print(f"[green]✓[/green] Project configuration initialized: {project_config_path}")
-        
+
         # Show configuration summary
         console.print("\n[bold]Configuration Summary:[/bold]")
-        console.print("• Review cycles: [cyan]10 max iterations[/cyan], [cyan]60s check interval[/cyan]")
-        console.print("• AI agents: [cyan]pull-request-reviewer[/cyan] for reviews, [cyan]coder[/cyan] for updates")
+        console.print(
+            "• Review cycles: [cyan]10 max iterations[/cyan], [cyan]60s check interval[/cyan]"
+        )
+        console.print(
+            "• AI agents: [cyan]pull-request-reviewer[/cyan] for reviews, [cyan]coder[/cyan] for updates"
+        )
         console.print("• Branch naming: [cyan]auto/{type}/{id}[/cyan]")
         console.print("• Human approval: [cyan]required[/cyan]")
-        
+
         # Show next steps
         console.print("\n[bold]Next Steps:[/bold]")
         console.print("1. [cyan]gh auth login[/cyan] - Authenticate with GitHub")
         console.print("2. [cyan]auto config show[/cyan] - Review configuration")
         console.print("3. [cyan]auto issues[/cyan] - List available issues")
         console.print("4. [cyan]auto <issue-id>[/cyan] - Start your first automated workflow")
-        
+
         console.print("\n[bold]Customization:[/bold]")
         console.print(f"Edit [cyan]{project_config_path}[/cyan] to customize project settings")
         console.print("Use [cyan]auto config set <key> <value>[/cyan] to change specific values")
-        
+
         # Validation check
         try:
-            config = get_config()
+            get_config()
             console.print("\n[green]✓[/green] Configuration validation passed")
         except Exception as e:
             console.print(f"\n[yellow]⚠[/yellow] Configuration validation warning: {e}")
             console.print("[dim]This may not affect basic functionality[/dim]")
-        
+
     except ConfigError as e:
         console.print(f"[red]✗ Configuration Error:[/red] {e}")
         console.print("\n[bold]Troubleshooting:[/bold]")
@@ -164,10 +168,10 @@ def init() -> None:
 @cli.group()
 def config() -> None:
     """Configuration management for auto tool.
-    
+
     Manage user and project-level configuration including review cycle settings,
     AI agent configuration, GitHub integration, and workflow preferences.
-    
+
     \b
     Common Configuration Keys:
         workflows.max_review_iterations    # Maximum review cycle iterations (1-50)
@@ -177,7 +181,7 @@ def config() -> None:
         ai.review_prompt                   # Custom review prompt template
         github.default_reviewer            # Default human reviewer
         github.pr_template                 # PR template file path
-    
+
     \b
     Examples:
         auto config show                           # Show current configuration
@@ -192,19 +196,19 @@ def config() -> None:
 @click.argument("key")
 def config_get(key: str) -> None:
     """Get configuration value by key.
-    
+
     Retrieves a configuration value using dot-separated notation.
     Values are resolved with project config taking precedence over user config.
-    
+
     \b
     KEY: Dot-separated configuration key
-    
+
     \b
     Examples:
         auto config get ai.review_agent
         auto config get workflows.max_review_iterations
         auto config get github.default_reviewer
-    
+
     \b
     Available Sections:
         workflows.*    # Review and workflow settings
@@ -215,62 +219,61 @@ def config_get(key: str) -> None:
     """
     try:
         value = config_manager.get_config_value(key)
-        
+
         # Format the output nicely
         if isinstance(value, bool):
             value_str = f"[cyan]{value}[/cyan]"
-        elif isinstance(value, (int, float)):
+        elif isinstance(value, int | float):
             value_str = f"[yellow]{value}[/yellow]"
         elif isinstance(value, str):
             value_str = f"[green]'{value}'[/green]"
         else:
             value_str = str(value)
-        
+
         console.print(f"[bold]{key}:[/bold] {value_str}")
-        
+
     except ConfigError as e:
         console.print(f"[red]✗ Configuration Error:[/red] {e}")
-        console.print(f"\n[bold]Available sections:[/bold]")
+        console.print("\n[bold]Available sections:[/bold]")
         try:
             config = get_config()
             sections = list(config.model_dump().keys())
             console.print(f"[dim]{', '.join(sections)}[/dim]")
-        except:
+        except Exception:
             pass
-        console.print(f"\n[bold]Tip:[/bold] Use [cyan]auto config show[/cyan] to see all available keys")
+        console.print(
+            "\n[bold]Tip:[/bold] Use [cyan]auto config show[/cyan] to see all available keys"
+        )
         sys.exit(1)
 
 
 @config.command("set")
 @click.argument("key")
 @click.argument("value")
-@click.option(
-    "--project", "-p", is_flag=True,
-    help="Set in project config instead of user config"
-)
+@click.option("--project", "-p", is_flag=True, help="Set in project config instead of user config")
 def config_set(key: str, value: str, project: bool) -> None:
     """Set configuration value.
-    
+
     Sets a configuration value using dot-separated notation.
     Values are automatically parsed to appropriate types (bool, int, float, string).
-    
+
     \b
     KEY: Dot-separated configuration key
     VALUE: Value to set (auto-parsed to correct type)
-    
+
     \b
     Type Conversion:
         'true'/'false' → boolean
         Numbers → int or float
         Everything else → string
-    
+
     \b
     Examples:
         auto config set workflows.max_review_iterations 15
         auto config set ai.review_agent security-focused
         auto config set workflows.require_human_approval true
         auto config set ai.review_prompt "Custom review prompt"
-    
+
     \b
     Scope:
         --project    Save to project config (.auto/config.yaml)
@@ -278,7 +281,7 @@ def config_set(key: str, value: str, project: bool) -> None:
     """
     try:
         # Convert string values to appropriate types
-        parsed_value = value
+        parsed_value: Any = value
         if value.lower() in ("true", "false"):
             parsed_value = value.lower() == "true"
         elif value.isdigit():
@@ -288,13 +291,13 @@ def config_set(key: str, value: str, project: bool) -> None:
                 parsed_value = float(value)
             except ValueError:
                 parsed_value = value
-        
+
         # Validate the change by attempting to apply it
         try:
             config = get_config()
             # Create a test config to validate the change
             test_config_dict = config.model_dump()
-            
+
             # Navigate to the key and set the value for validation
             keys = key.split(".")
             current = test_config_dict
@@ -303,43 +306,46 @@ def config_set(key: str, value: str, project: bool) -> None:
                     current[k] = {}
                 current = current[k]
             current[keys[-1]] = parsed_value
-            
+
             # Validate the configuration
             from auto.models import Config
+
             Config.model_validate(test_config_dict)
-            
+
         except Exception as validation_error:
             console.print(f"[red]✗ Validation Error:[/red] {validation_error}")
-            console.print(f"\n[bold]Tip:[/bold] Check the value format and valid ranges")
+            console.print("\n[bold]Tip:[/bold] Check the value format and valid ranges")
             sys.exit(1)
-        
+
         config_manager.set_config_value(key, parsed_value, user_level=not project)
-        
+
         config_type = "project" if project else "user"
-        
+
         # Format value for display
         if isinstance(parsed_value, bool):
             display_value = f"[cyan]{parsed_value}[/cyan]"
-        elif isinstance(parsed_value, (int, float)):
+        elif isinstance(parsed_value, int | float):
             display_value = f"[yellow]{parsed_value}[/yellow]"
         else:
             display_value = f"[green]'{parsed_value}'[/green]"
-        
-        console.print(f"[green]✓[/green] {config_type.title()} config updated: [bold]{key}[/bold] = {display_value}")
-        
+
+        console.print(
+            f"[green]✓[/green] {config_type.title()} config updated: [bold]{key}[/bold] = {display_value}"
+        )
+
         # Show config file path
         config_files = config_manager.list_config_files()
         file_key = "project" if project else "user"
         if config_files[file_key]:
             console.print(f"[dim]Saved to: {config_files[file_key]}[/dim]")
-        
+
     except ConfigError as e:
         console.print(f"[red]✗ Configuration Error:[/red] {e}")
-        console.print(f"\n[bold]Troubleshooting:[/bold]")
+        console.print("\n[bold]Troubleshooting:[/bold]")
         console.print("• Check that the configuration key exists")
         console.print("• Verify the value format is correct")
         console.print("• Ensure you have write permissions to the config file")
-        console.print(f"• Use [cyan]auto config show[/cyan] to see valid keys")
+        console.print("• Use [cyan]auto config show[/cyan] to see valid keys")
         sys.exit(1)
 
 
@@ -348,12 +354,12 @@ def config_list() -> None:
     """List all configuration files and their status."""
     try:
         config_files = config_manager.list_config_files()
-        
+
         table = Table(title="Configuration Files")
         table.add_column("Type", style="cyan")
         table.add_column("Path")
         table.add_column("Status", style="green")
-        
+
         for config_type, path in config_files.items():
             if path and path.exists():
                 status = "✓ Exists"
@@ -361,25 +367,33 @@ def config_list() -> None:
             else:
                 status = "✗ Not found"
                 path_str = "N/A" if path is None else str(path)
-            
+
             table.add_row(config_type.title(), path_str, status)
-        
+
         console.print(table)
-        
+
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
 
 
 @config.command("show")
-@click.option("--format", "-f", type=click.Choice(["table", "yaml", "json"]), default="table", help="Output format (default: table)")
-@click.option("--section", "-s", help="Show only specific section (e.g., 'github', 'ai', 'workflows')")
+@click.option(
+    "--format",
+    "-f",
+    type=click.Choice(["table", "yaml", "json"]),
+    default="table",
+    help="Output format (default: table)",
+)
+@click.option(
+    "--section", "-s", help="Show only specific section (e.g., 'github', 'ai', 'workflows')"
+)
 def config_show(format: str, section: str) -> None:
     """Show current configuration values."""
     try:
         current_config = config_manager.get_config()
         config_dict = current_config.model_dump()
-        
+
         # Filter by section if specified
         if section:
             if section not in config_dict:
@@ -387,19 +401,22 @@ def config_show(format: str, section: str) -> None:
                 console.print(f"[dim]Available sections: {', '.join(config_dict.keys())}[/dim]")
                 sys.exit(1)
             config_dict = {section: config_dict[section]}
-        
+
         if format == "yaml":
             import yaml
+
             console.print(yaml.dump(config_dict, default_flow_style=False, sort_keys=True))
         elif format == "json":
             import json
+
             console.print(json.dumps(config_dict, indent=2, sort_keys=True, default=str))
         else:  # table format
+
             def add_config_rows(table: Table, data: dict, prefix: str = "") -> None:
                 """Recursively add configuration rows to table."""
                 for key, value in data.items():
                     full_key = f"{prefix}.{key}" if prefix else key
-                    
+
                     if isinstance(value, dict):
                         # Add section header
                         table.add_row(f"[bold cyan]{full_key}[/bold cyan]", "", "")
@@ -420,21 +437,21 @@ def config_show(format: str, section: str) -> None:
                             display_value = "[dim](empty)[/dim]"
                         else:
                             display_value = str(value)
-                        
+
                         table.add_row(full_key, type(value).__name__, display_value)
-            
+
             title = "Current Configuration"
             if section:
                 title += f" - {section.title()} Section"
-            
+
             table = Table(title=title)
             table.add_column("Setting", style="cyan", min_width=20)
             table.add_column("Type", style="dim", width=10)
             table.add_column("Value", min_width=30)
-            
+
             add_config_rows(table, config_dict)
             console.print(table)
-            
+
             # Show configuration sources
             console.print("\n[bold]Configuration Sources:[/bold]")
             config_files = config_manager.list_config_files()
@@ -443,7 +460,7 @@ def config_show(format: str, section: str) -> None:
                     console.print(f"  [green]✓[/green] {config_type}: {path}")
                 else:
                     console.print(f"  [dim]✗ {config_type}: Not found[/dim]")
-        
+
     except ConfigError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -459,11 +476,11 @@ def status(verbose: bool) -> None:
     try:
         core = get_core()
         workflow_states = core.get_workflow_states()
-        
+
         if not workflow_states:
             console.print("[yellow]No active workflows found.[/yellow]")
             return
-        
+
         table = Table(title="Active Workflows")
         table.add_column("Issue ID", style="cyan")
         table.add_column("Status", style="white")
@@ -474,12 +491,12 @@ def status(verbose: bool) -> None:
             table.add_column("Worktree", style="magenta")
             table.add_column("Repository", style="dim")
         table.add_column("Updated", style="dim")
-        
+
         for state in sorted(workflow_states, key=lambda s: s.updated_at, reverse=True):
             pr_info = f"#{state.pr_number}" if state.pr_number else "N/A"
             branch_info = state.branch or "N/A"
             updated = state.updated_at.strftime("%Y-%m-%d %H:%M") if state.updated_at else "N/A"
-            
+
             # Add status styling
             status_style = {
                 "completed": "[green]",
@@ -489,21 +506,27 @@ def status(verbose: bool) -> None:
                 "implementing": "[cyan]",
                 "fetching": "[blue]",
                 "creating_pr": "[magenta]",
-            }.get(state.status.value if hasattr(state.status, 'value') else str(state.status), "")
-            
-            status_display = f"{status_style}{state.status}[/]" if status_style else str(state.status)
-            
+            }.get(state.status.value if hasattr(state.status, "value") else str(state.status), "")
+
+            status_display = (
+                f"{status_style}{state.status}[/]" if status_style else str(state.status)
+            )
+
             # Add AI status styling
-            ai_status_value = state.ai_status.value if hasattr(state.ai_status, 'value') else str(state.ai_status)
+            ai_status_value = (
+                state.ai_status.value if hasattr(state.ai_status, "value") else str(state.ai_status)
+            )
             ai_status_style = {
                 "not_started": "[dim]",
                 "in_progress": "[yellow]",
                 "implemented": "[green]",
                 "failed": "[red]",
             }.get(ai_status_value, "")
-            
-            ai_status_display = f"{ai_status_style}{ai_status_value}[/]" if ai_status_style else ai_status_value
-            
+
+            ai_status_display = (
+                f"{ai_status_style}{ai_status_value}[/]" if ai_status_style else ai_status_value
+            )
+
             row_data = [
                 state.issue_id,
                 status_display,
@@ -511,7 +534,7 @@ def status(verbose: bool) -> None:
                 pr_info,
                 branch_info,
             ]
-            
+
             if verbose:
                 # Add worktree info
                 if state.worktree_info:
@@ -523,53 +546,55 @@ def status(verbose: bool) -> None:
                     row_data.append(worktree_display)
                 else:
                     row_data.append("N/A")
-                
+
                 # Add repository info
                 if state.repository:
                     row_data.append(state.repository.full_name)
                 else:
                     row_data.append("N/A")
-            
+
             row_data.append(updated)
             table.add_row(*row_data)
-        
+
         console.print(table)
-        
+
         # Show summary
-        status_counts = {}
-        ai_status_counts = {}
+        status_counts: dict[str, int] = {}
+        ai_status_counts: dict[str, int] = {}
         worktree_count = 0
         pr_count = 0
-        
+
         for state in workflow_states:
-            status_key = state.status.value if hasattr(state.status, 'value') else str(state.status)
+            status_key = state.status.value if hasattr(state.status, "value") else str(state.status)
             status_counts[status_key] = status_counts.get(status_key, 0) + 1
-            
-            ai_status_key = state.ai_status.value if hasattr(state.ai_status, 'value') else str(state.ai_status)
+
+            ai_status_key = (
+                state.ai_status.value if hasattr(state.ai_status, "value") else str(state.ai_status)
+            )
             ai_status_counts[ai_status_key] = ai_status_counts.get(ai_status_key, 0) + 1
-            
+
             if state.worktree_info:
                 worktree_count += 1
             if state.pr_number:
                 pr_count += 1
-        
+
         console.print(f"\n[bold]Summary:[/bold] {len(workflow_states)} active workflows")
-        
+
         # Show workflow status breakdown
         console.print("  [bold]Workflow Status:[/bold]")
         for status, count in status_counts.items():
             console.print(f"    {status}: {count}")
-        
+
         # Show AI status breakdown
         console.print("  [bold]AI Implementation:[/bold]")
         for ai_status, count in ai_status_counts.items():
             console.print(f"    {ai_status}: {count}")
-        
+
         if verbose:
             console.print("  [bold]Resources:[/bold]")
             console.print(f"    Active worktrees: {worktree_count}")
             console.print(f"    Pull requests: {pr_count}")
-        
+
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -582,21 +607,21 @@ def cleanup(force: bool, verbose: bool) -> None:
     """Clean up completed workflow states and worktrees."""
     try:
         from auto.workflows import cleanup_process_workflow
-        
+
         core = get_core()
         workflow_states = core.get_workflow_states()
-        
+
         if not workflow_states:
             console.print("[yellow]No workflows to clean up.[/yellow]")
             return
-        
+
         cleaned_count = 0
         worktree_cleaned_count = 0
         errors = []
-        
+
         for state in workflow_states:
             should_cleanup = False
-            
+
             # Determine if we should clean up this workflow
             if force:
                 should_cleanup = True
@@ -604,17 +629,17 @@ def cleanup(force: bool, verbose: bool) -> None:
             elif state.status.value in ["completed", "failed"]:
                 should_cleanup = True
                 reason = f"status: {state.status.value}"
-            
+
             if should_cleanup:
                 if verbose:
                     console.print(f"[blue]Info:[/blue] Cleaning up {state.issue_id} ({reason})")
-                
+
                 try:
                     # Clean up worktree if it exists
                     if state.worktree_info:
                         if verbose:
                             console.print(f"  Removing worktree: {state.worktree_info.path}")
-                        
+
                         success = cleanup_process_workflow(state.issue_id)
                         if success:
                             worktree_cleaned_count += 1
@@ -622,15 +647,15 @@ def cleanup(force: bool, verbose: bool) -> None:
                                 console.print("  [green]✓[/green] Worktree cleaned up")
                         else:
                             errors.append(f"Failed to clean up worktree for {state.issue_id}")
-                    
+
                     cleaned_count += 1
-                    
+
                 except Exception as e:
                     error_msg = f"Failed to clean up {state.issue_id}: {e}"
                     errors.append(error_msg)
                     if verbose:
                         console.print(f"  [red]✗[/red] {error_msg}")
-        
+
         # Also clean up completed states
         try:
             state_cleaned = core.cleanup_completed_states()
@@ -638,7 +663,7 @@ def cleanup(force: bool, verbose: bool) -> None:
                 console.print(f"[green]✓[/green] Cleaned up {state_cleaned} workflow state file(s)")
         except Exception as e:
             errors.append(f"Failed to clean up state files: {e}")
-        
+
         # Show results
         if cleaned_count > 0:
             console.print(f"[green]✓[/green] Cleaned up {cleaned_count} workflow(s)")
@@ -646,15 +671,17 @@ def cleanup(force: bool, verbose: bool) -> None:
                 console.print(f"[green]✓[/green] Cleaned up {worktree_cleaned_count} worktree(s)")
         else:
             console.print("[yellow]No workflows needed cleanup.[/yellow]")
-        
+
         if errors:
             console.print("\n[red]Errors encountered:[/red]")
             for error in errors:
                 console.print(f"  - {error}")
-            
+
             if not force:
-                console.print("\n[yellow]Hint:[/yellow] Use --force to clean up all workflows including active ones")
-        
+                console.print(
+                    "\n[yellow]Hint:[/yellow] Use --force to clean up all workflows including active ones"
+                )
+
     except Exception as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -668,48 +695,56 @@ def fetch(issue_id: str, verbose: bool) -> None:
     """Fetch issue details and create workflow state."""
     try:
         from auto.workflows.fetch import FetchWorkflowError
-        
+
         # Parse and validate issue identifier
         identifier = IssueIdentifier.parse(issue_id)
-        
+
         if verbose:
             enable_verbose_logging()
-            console.print(f"[blue]Info:[/blue] Parsing {identifier.provider.value} issue: {identifier.issue_id}")
-        
+            console.print(
+                f"[blue]Info:[/blue] Parsing {identifier.provider.value} issue: {identifier.issue_id}"
+            )
+
         # Validate prerequisites
         if not validate_issue_access(identifier.issue_id):
             console.print(f"[red]Error:[/red] Cannot access issue {identifier.issue_id}")
             console.print("[yellow]Hint:[/yellow] Check authentication and repository access")
             sys.exit(1)
-        
+
         # Run fetch workflow
-        console.print(f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}")
-        
+        console.print(
+            f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}"
+        )
+
         state = fetch_issue_workflow_sync(identifier.issue_id)
-        
+
         if state.issue:
             # Success - show issue details
-            console.print(f"[green]✓[/green] Fetched GitHub issue {state.issue.id}: [bold]{state.issue.title}[/bold]")
-            
+            console.print(
+                f"[green]✓[/green] Fetched GitHub issue {state.issue.id}: [bold]{state.issue.title}[/bold]"
+            )
+
             if verbose:
                 console.print(f"  Status: {state.issue.status}")
-                console.print(f"  Type: {state.issue.issue_type.value if state.issue.issue_type else 'Unknown'}")
+                console.print(
+                    f"  Type: {state.issue.issue_type.value if state.issue.issue_type else 'Unknown'}"
+                )
                 if state.issue.assignee:
                     console.print(f"  Assignee: {state.issue.assignee}")
                 if state.issue.labels:
                     console.print(f"  Labels: {', '.join(state.issue.labels)}")
                 if state.issue.url:
                     console.print(f"  URL: {state.issue.url}")
-            
+
             console.print("[green]✓[/green] Workflow state created")
-            
+
             if verbose:
                 console.print(f"  State file: .auto/state/{identifier.issue_id}.yaml")
                 console.print(f"  Status: {state.status.value}")
         else:
             console.print("[red]Error:[/red] Failed to fetch issue details")
             sys.exit(1)
-        
+
     except FetchWorkflowError as e:
         console.print(f"[red]Error:[/red] {e}")
         if "authentication" in str(e).lower():
@@ -722,6 +757,7 @@ def fetch(issue_id: str, verbose: bool) -> None:
         console.print(f"[red]Error:[/red] Unexpected error: {e}")
         if verbose:
             import traceback
+
             console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
@@ -737,66 +773,73 @@ def fetch(issue_id: str, verbose: bool) -> None:
 @click.option("--no-pr", is_flag=True, help="Skip PR creation after implementation")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
 def implement(
-    issue_id: str, 
-    prompt: str, 
-    prompt_file: str, 
-    prompt_template: str, 
-    prompt_append: str, 
-    show_prompt: bool, 
-    agent: str, 
-    no_pr: bool, 
-    verbose: bool
+    issue_id: str,
+    prompt: str,
+    prompt_file: str,
+    prompt_template: str,
+    prompt_append: str,
+    show_prompt: bool,
+    agent: str,
+    no_pr: bool,
+    verbose: bool,
 ) -> None:
     """Run AI implementation for existing issue with custom prompt options."""
     try:
+        import asyncio
+
         from auto.workflows import (
-            implement_issue_workflow, 
+            ImplementationError,
             create_pull_request_workflow,
             get_issue_from_state,
+            implement_issue_workflow,
             validate_implementation_prerequisites,
-            ImplementationError
         )
         from auto.workflows.pr_create import PRCreationError
-        import asyncio
-        
+
         # Parse issue identifier
         identifier = IssueIdentifier.parse(issue_id)
-        
+
         if verbose:
             enable_verbose_logging()
-            console.print(f"[blue]Info:[/blue] Implementing {identifier.provider.value} issue: {identifier.issue_id}")
-        
+            console.print(
+                f"[blue]Info:[/blue] Implementing {identifier.provider.value} issue: {identifier.issue_id}"
+            )
+
         # Get core and existing state
         core = get_core()
         state = core.get_workflow_state(identifier.issue_id)
-        
+
         if state is None:
             console.print(f"[red]Error:[/red] No workflow state found for {identifier.issue_id}")
-            console.print("[yellow]Hint:[/yellow] Run 'auto fetch' or 'auto process' first to create the workflow")
+            console.print(
+                "[yellow]Hint:[/yellow] Run 'auto fetch' or 'auto process' first to create the workflow"
+            )
             sys.exit(1)
-        
+
         # Get issue from state
         issue = get_issue_from_state(identifier.issue_id)
         if issue is None:
             console.print(f"[red]Error:[/red] Issue details not found for {identifier.issue_id}")
             console.print("[yellow]Hint:[/yellow] Run 'auto fetch' first to load issue details")
             sys.exit(1)
-        
+
         # Validate prerequisites
         try:
             validate_implementation_prerequisites(state)
         except ImplementationError as e:
             console.print(f"[red]Error:[/red] Prerequisites not met: {e}")
-            console.print("[yellow]Hint:[/yellow] Ensure worktree exists and is properly configured")
+            console.print(
+                "[yellow]Hint:[/yellow] Ensure worktree exists and is properly configured"
+            )
             sys.exit(1)
-        
+
         if verbose:
             console.print(f"[green]✓[/green] Found issue in worktree: {state.worktree}")
             if prompt_template:
                 console.print(f"[blue]Info:[/blue] Using prompt template: {prompt_template}")
             if agent:
                 console.print(f"[blue]Info:[/blue] Using custom agent: {agent}")
-        
+
         # Override agent if specified
         if agent:
             config = get_config()
@@ -804,86 +847,95 @@ def implement(
             config.ai.implementation_agent = agent
             if verbose:
                 console.print(f"[blue]Info:[/blue] Agent override: {original_agent} → {agent}")
-        
+
         # Run AI implementation
         console.print("[blue]Info:[/blue] Running AI implementation...")
-        
+
         try:
-            state = asyncio.run(implement_issue_workflow(
-                issue=issue,
-                workflow_state=state,
-                prompt_override=prompt,
-                prompt_file=prompt_file,
-                prompt_template=prompt_template,
-                prompt_append=prompt_append,
-                show_prompt=show_prompt
-            ))
-            
+            state = asyncio.run(
+                implement_issue_workflow(
+                    issue=issue,
+                    workflow_state=state,
+                    prompt_override=prompt,
+                    prompt_file=prompt_file,
+                    prompt_template=prompt_template,
+                    prompt_append=prompt_append,
+                    show_prompt=show_prompt,
+                )
+            )
+
             # Save state after implementation
             core.save_workflow_state(state)
-            
+
             if show_prompt:
                 console.print("[green]✓[/green] Prompt displayed")
                 return
-            
+
             # Show implementation results
             if state.ai_response and state.ai_response.success:
                 console.print("[green]✓[/green] AI implementation completed")
-                
+
                 if verbose and state.ai_response:
                     file_count = len(state.ai_response.file_changes)
                     cmd_count = len(state.ai_response.commands)
                     console.print(f"  Files modified: {file_count}")
                     console.print(f"  Commands executed: {cmd_count}")
-                    
+
                     if state.ai_response.file_changes:
                         console.print("  Changed files:")
                         for change in state.ai_response.file_changes[:5]:  # Show first 5
-                            action = change.get('action', 'modified')
-                            path = change.get('path', 'unknown')
+                            action = change.get("action", "modified")
+                            path = change.get("path", "unknown")
                             console.print(f"    - {action.title()}: {path}")
                         if len(state.ai_response.file_changes) > 5:
-                            console.print(f"    ... and {len(state.ai_response.file_changes) - 5} more")
-                
+                            console.print(
+                                f"    ... and {len(state.ai_response.file_changes) - 5} more"
+                            )
+
                 console.print("[green]✓[/green] Changes applied successfully")
                 console.print("[green]✓[/green] Workflow state updated")
-                
+
                 # Create PR if not disabled
                 if not no_pr:
                     console.print("[blue]Info:[/blue] Creating pull request...")
                     try:
-                        state = asyncio.run(create_pull_request_workflow(
-                            issue=issue,
-                            workflow_state=state
-                        ))
-                        
+                        state = asyncio.run(
+                            create_pull_request_workflow(issue=issue, workflow_state=state)
+                        )
+
                         core.save_workflow_state(state)
-                        
+
                         if state.pr_number:
-                            console.print(f"[green]✓[/green] Pull request created: #{state.pr_number}")
+                            console.print(
+                                f"[green]✓[/green] Pull request created: #{state.pr_number}"
+                            )
                             if verbose and state.repository:
                                 pr_url = f"https://github.com/{state.repository.full_name}/pull/{state.pr_number}"
                                 console.print(f"  URL: {pr_url}")
                         else:
-                            console.print("[yellow]Warning:[/yellow] PR creation completed but no PR number available")
-                        
+                            console.print(
+                                "[yellow]Warning:[/yellow] PR creation completed but no PR number available"
+                            )
+
                     except PRCreationError as e:
                         console.print(f"[red]Error:[/red] Failed to create PR: {e}")
-                        console.print("[yellow]Note:[/yellow] Implementation completed successfully")
+                        console.print(
+                            "[yellow]Note:[/yellow] Implementation completed successfully"
+                        )
                         sys.exit(1)
                 else:
                     console.print("[blue]Info:[/blue] PR creation skipped (--no-pr)")
-                
+
             else:
                 console.print("[red]Error:[/red] AI implementation failed")
                 if state.ai_response and state.ai_response.content:
                     console.print(f"  Reason: {state.ai_response.content}")
                 sys.exit(1)
-            
+
         except ImplementationError as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
-        
+
         # Show next steps
         if not no_pr and state.pr_number:
             console.print("\n[bold]Next steps:[/bold]")
@@ -895,7 +947,7 @@ def implement(
             console.print("1. Review the implementation in the worktree")
             console.print("2. Run [cyan]auto status[/cyan] to check progress")
             console.print("3. Create PR manually when ready")
-            
+
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -903,13 +955,16 @@ def implement(
         console.print(f"[red]Error:[/red] Unexpected error: {e}")
         if verbose:
             import traceback
+
             console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
 
 @cli.command()
 @click.argument("issue_id")
-@click.option("--base-branch", "-b", help="Base branch for worktree (auto-detected if not specified)")
+@click.option(
+    "--base-branch", "-b", help="Base branch for worktree (auto-detected if not specified)"
+)
 @click.option("--prompt", help="Custom prompt text for AI implementation")
 @click.option("--prompt-file", help="Path to file containing custom prompt")
 @click.option("--prompt-template", help="Named prompt template to use")
@@ -921,35 +976,36 @@ def implement(
 @click.option("--resume", is_flag=True, help="Resume interrupted workflow from saved state")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed output")
 def process(
-    issue_id: str, 
-    base_branch: str, 
-    prompt: str, 
-    prompt_file: str, 
-    prompt_template: str, 
-    prompt_append: str, 
-    show_prompt: bool, 
-    agent: str, 
-    no_ai: bool, 
-    no_pr: bool, 
+    issue_id: str,
+    base_branch: str,
+    prompt: str,
+    prompt_file: str,
+    prompt_template: str,
+    prompt_append: str,
+    show_prompt: bool,
+    agent: str,
+    no_ai: bool,
+    no_pr: bool,
     resume: bool,
-    verbose: bool
+    verbose: bool,
 ) -> None:
     """Process issue: fetch details, create worktree, run AI implementation, and create PR."""
     # Import workflow components
     from auto.workflows import (
-        process_issue_workflow, 
-        validate_process_prerequisites, 
-        ProcessWorkflowError
+        ProcessWorkflowError,
+        process_issue_workflow,
+        validate_process_prerequisites,
     )
-    
+
     try:
-        
         # Parse issue identifier
         identifier = IssueIdentifier.parse(issue_id)
-        
+
         if verbose:
             enable_verbose_logging()
-            console.print(f"[blue]Info:[/blue] Processing {identifier.provider.value} issue: {identifier.issue_id}")
+            console.print(
+                f"[blue]Info:[/blue] Processing {identifier.provider.value} issue: {identifier.issue_id}"
+            )
             if resume:
                 console.print("[blue]Info:[/blue] Resuming from existing workflow state")
             if no_ai:
@@ -960,18 +1016,18 @@ def process(
                 console.print(f"[blue]Info:[/blue] Using prompt template: {prompt_template}")
             if agent:
                 console.print(f"[blue]Info:[/blue] Using custom agent: {agent}")
-        
+
         # Validate prerequisites (skip for resume if existing state is valid)
         if not resume:
             console.print("[blue]Info:[/blue] Validating prerequisites...")
             errors = validate_process_prerequisites(identifier.issue_id)
-            
+
             if errors:
                 console.print("[red]Error:[/red] Prerequisites not met:")
                 for error in errors:
                     console.print(f"  - {error}")
                 sys.exit(1)
-            
+
             if verbose:
                 console.print("[green]✓[/green] Prerequisites validated")
         else:
@@ -979,13 +1035,19 @@ def process(
             core = get_core()
             existing_state = core.get_workflow_state(identifier.issue_id)
             if existing_state is None:
-                console.print(f"[red]Error:[/red] No existing workflow state found for {identifier.issue_id}")
-                console.print("[yellow]Hint:[/yellow] Use 'auto process' without --resume to start a new workflow")
+                console.print(
+                    f"[red]Error:[/red] No existing workflow state found for {identifier.issue_id}"
+                )
+                console.print(
+                    "[yellow]Hint:[/yellow] Use 'auto process' without --resume to start a new workflow"
+                )
                 sys.exit(1)
-            
+
             if verbose:
-                console.print(f"[green]✓[/green] Found existing workflow state (status: {existing_state.status.value})")
-        
+                console.print(
+                    f"[green]✓[/green] Found existing workflow state (status: {existing_state.status.value})"
+                )
+
         # Override agent if specified
         if agent:
             config = get_config()
@@ -993,12 +1055,12 @@ def process(
             config.ai.implementation_agent = agent
             if verbose:
                 console.print(f"[blue]Info:[/blue] Agent override: {original_agent} → {agent}")
-        
+
         # Run enhanced process workflow
         console.print(f"[blue]Info:[/blue] Processing issue {identifier.issue_id}...")
-        
+
         state = process_issue_workflow(
-            issue_id=identifier.issue_id, 
+            issue_id=identifier.issue_id,
             base_branch=base_branch,
             enable_ai=not no_ai,
             enable_pr=not no_pr,
@@ -1007,31 +1069,37 @@ def process(
             prompt_template=prompt_template,
             prompt_append=prompt_append,
             show_prompt=show_prompt,
-            resume=resume
+            resume=resume,
         )
-        
+
         # Handle show prompt early exit
         if show_prompt:
             console.print("[green]✓[/green] Prompt displayed")
             return
-        
+
         # Success - show results
         if state.issue:
-            console.print(f"[green]✓[/green] Processed issue {state.issue.id}: [bold]{state.issue.title}[/bold]")
+            console.print(
+                f"[green]✓[/green] Processed issue {state.issue.id}: [bold]{state.issue.title}[/bold]"
+            )
         else:
             console.print(f"[green]✓[/green] Processed issue {identifier.issue_id}")
-        
+
         if state.worktree_info:
-            console.print(f"[green]✓[/green] Created worktree: [cyan]{state.worktree_info.path}[/cyan]")
-            console.print(f"[green]✓[/green] Created branch: [cyan]{state.worktree_info.branch}[/cyan]")
-            
+            console.print(
+                f"[green]✓[/green] Created worktree: [cyan]{state.worktree_info.path}[/cyan]"
+            )
+            console.print(
+                f"[green]✓[/green] Created branch: [cyan]{state.worktree_info.branch}[/cyan]"
+            )
+
             if verbose:
-                base_branch_used = state.metadata.get('base_branch', 'unknown')
+                base_branch_used = state.metadata.get("base_branch", "unknown")
                 console.print(f"  Base branch: {base_branch_used}")
                 console.print(f"  Worktree exists: {state.worktree_info.exists()}")
                 if state.repository:
                     console.print(f"  Repository: {state.repository.full_name}")
-        
+
         # Show AI implementation results
         if not no_ai and state.ai_response:
             if state.ai_response.success:
@@ -1045,7 +1113,7 @@ def process(
                 console.print("[yellow]Warning:[/yellow] AI implementation failed")
         elif no_ai:
             console.print("[blue]Info:[/blue] AI implementation skipped")
-        
+
         # Show PR creation results
         if not no_pr and state.pr_number:
             console.print(f"[green]✓[/green] Pull request created: #{state.pr_number}")
@@ -1054,29 +1122,31 @@ def process(
                 console.print(f"  URL: {pr_url}")
         elif no_pr:
             console.print("[blue]Info:[/blue] PR creation skipped")
-        
+
         console.print("[green]✓[/green] Process workflow completed")
-        
+
         if verbose:
             console.print(f"  State file: .auto/state/{identifier.issue_id}.yaml")
             console.print(f"  Status: {state.status.value}")
-        
+
         # Show next steps based on what was completed
         console.print("\n[bold]Next steps:[/bold]")
         if state.pr_number:
             console.print("1. Review the created pull request")
-            console.print("2. Address any review comments")  
+            console.print("2. Address any review comments")
             console.print("3. Merge when approved")
         elif not no_ai and not no_pr:
             console.print("1. Review the implementation in the worktree")
             console.print("2. Create PR manually when ready")
             console.print("3. Run [cyan]auto status[/cyan] to check progress")
         elif state.worktree_info:
-            console.print(f"1. Change to worktree directory: [cyan]cd {state.worktree_info.path}[/cyan]")
+            console.print(
+                f"1. Change to worktree directory: [cyan]cd {state.worktree_info.path}[/cyan]"
+            )
             if no_ai:
                 console.print("2. Start implementing the issue")
             console.print("3. Run [cyan]auto status[/cyan] to check progress")
-        
+
     except ProcessWorkflowError as e:
         console.print(f"[red]Error:[/red] {e}")
         if "authentication" in str(e).lower():
@@ -1091,6 +1161,7 @@ def process(
         console.print(f"[red]Error:[/red] Unexpected error: {e}")
         if verbose:
             import traceback
+
             console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
@@ -1099,42 +1170,64 @@ def process(
 @click.argument("pr_id")
 @click.option("--force", is_flag=True, help="Force review even if already reviewed")
 @click.option("--agent", default=None, help="Override AI agent for review")
-def review(pr_id: str, force: bool, agent: Optional[str]) -> None:
+def review(pr_id: str, force: bool, agent: str | None) -> None:
     """Trigger AI review on existing PR."""
     try:
         from auto.integrations.github import detect_repository
         from auto.workflows.review import trigger_ai_review
-        
+
         console.print(f"[blue]Starting AI review for PR #{pr_id}...[/blue]")
-        
+
         # Detect repository
         try:
             repo = detect_repository()
+            if repo is None:
+                console.print("[red]Error:[/red] Could not detect repository")
+                sys.exit(1)
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not detect repository: {e}")
             sys.exit(1)
-        
+
         # Parse PR ID
-        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
-        
+        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip("#"))
+
+        # Create review cycle state for AI review
+        import time
+
+        from auto.workflows.review import ReviewCycleState, ReviewCycleStatus
+
+        state = ReviewCycleState(
+            pr_number=pr_number,
+            repository=f"{repo.owner}/{repo.name}",
+            iteration=0,
+            status=ReviewCycleStatus.PENDING,
+            ai_reviews=[],
+            human_reviews=[],
+            unresolved_comments=[],
+            last_activity=time.time(),
+            max_iterations=10,
+        )
+
         # Trigger AI review
         import asyncio
-        success = asyncio.run(trigger_ai_review(
-            pr_number=pr_number,
-            owner=repo.owner,
-            repo=repo.name,
-            force_review=force,
-            agent_override=agent
-        ))
-        
+
+        try:
+            asyncio.run(trigger_ai_review(state))
+            success = True
+        except Exception as e:
+            console.print(f"[red]Error during AI review:[/red] {e}")
+            success = False
+
         if success:
             console.print(f"[green]✓[/green] AI review completed for PR #{pr_number}")
-            console.print(f"[blue]View the review:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}")
+            console.print(
+                f"[blue]View the review:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}"
+            )
         else:
             console.print(f"[red]✗[/red] AI review failed for PR #{pr_number}")
             sys.exit(1)
-            
-    except ValueError as e:
+
+    except ValueError:
         console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
         sys.exit(1)
     except Exception as e:
@@ -1147,31 +1240,34 @@ def review(pr_id: str, force: bool, agent: Optional[str]) -> None:
 @click.argument("id")
 @click.option("--force", is_flag=True, help="Force update even if no unresolved comments")
 @click.option("--agent", default=None, help="Override AI agent for updates")
-def update(id: str, force: bool, agent: Optional[str]) -> None:
+def update(id: str, force: bool, agent: str | None) -> None:
     """Update PR based on review comments. Accepts either issue ID (e.g., '#12') or PR ID (e.g., '23')."""
     try:
-        from auto.integrations.github import detect_repository
-        from auto.workflows.review_update import execute_review_update
         from auto.core import get_core
+        from auto.integrations.github import detect_repository
         from auto.models import IssueIdentifier
-        
+        from auto.workflows.review_update import execute_review_update
+
         # Detect repository
         try:
             repo = detect_repository()
+            if repo is None:
+                console.print("[red]Error:[/red] Could not detect repository")
+                sys.exit(1)
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not detect repository: {e}")
             sys.exit(1)
-        
+
         # Determine if this is an issue ID or PR ID
         pr_number = None
-        
+
         try:
             # Try to parse as issue identifier first
             if not id.isdigit():
                 # If it's not just a number, try to parse as issue ID
                 identifier = IssueIdentifier.parse(id)
                 issue_id = identifier.issue_id
-                
+
                 # Look up the PR number from workflow state
                 core = get_core()
                 state = core.get_workflow_state(issue_id)
@@ -1180,7 +1276,9 @@ def update(id: str, force: bool, agent: Optional[str]) -> None:
                     console.print(f"[blue]Found PR #{pr_number} for issue {issue_id}[/blue]")
                 else:
                     console.print(f"[red]Error:[/red] No PR found for issue {issue_id}")
-                    console.print(f"[yellow]Hint:[/yellow] Make sure the issue has been processed and a PR created")
+                    console.print(
+                        "[yellow]Hint:[/yellow] Make sure the issue has been processed and a PR created"
+                    )
                     sys.exit(1)
             else:
                 # It's a plain number - could be either issue or PR
@@ -1188,7 +1286,7 @@ def update(id: str, force: bool, agent: Optional[str]) -> None:
                 core = get_core()
                 issue_id = f"#{id}"
                 state = core.get_workflow_state(issue_id)
-                
+
                 if state and state.pr_number:
                     # Found it as an issue ID
                     pr_number = state.pr_number
@@ -1198,33 +1296,41 @@ def update(id: str, force: bool, agent: Optional[str]) -> None:
                     pr_number = int(id)
                     state = core.get_workflow_state_by_pr(pr_number)
                     if state:
-                        console.print(f"[blue]Updating PR #{pr_number} (issue {state.issue_id})[/blue]")
+                        console.print(
+                            f"[blue]Updating PR #{pr_number} (issue {state.issue_id})[/blue]"
+                        )
                     else:
                         # Assume it's a PR number and proceed (user might be working without workflow state)
-                        console.print(f"[blue]Updating PR #{pr_number} (no workflow state found)[/blue]")
-        
+                        console.print(
+                            f"[blue]Updating PR #{pr_number} (no workflow state found)[/blue]"
+                        )
+
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not parse identifier '{id}': {e}")
             sys.exit(1)
-        
         # Execute review update
         import asyncio
-        success = asyncio.run(execute_review_update(
-            pr_number=pr_number,
-            owner=repo.owner,
-            repo=repo.name,
-            force_update=force,
-            agent_override=agent
-        ))
-        
+
+        success = asyncio.run(
+            execute_review_update(
+                pr_number=pr_number,
+                owner=repo.owner,
+                repo=repo.name,
+                force_update=force,
+                agent_override=agent,
+            )
+        )
+
         if success:
             console.print(f"[green]✓[/green] PR #{pr_number} updated successfully")
-            console.print(f"[blue]View the updates:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}")
+            console.print(
+                f"[blue]View the updates:[/blue] https://github.com/{repo.owner}/{repo.name}/pull/{pr_number}"
+            )
         else:
             console.print(f"[red]✗[/red] Failed to update PR #{pr_number}")
             sys.exit(1)
-            
-    except ValueError as e:
+
+    except ValueError:
         console.print(f"[red]Error:[/red] Invalid ID format: {id}")
         sys.exit(1)
     except Exception as e:
@@ -1236,57 +1342,68 @@ def update(id: str, force: bool, agent: Optional[str]) -> None:
 @cli.command()
 @click.argument("pr_id")
 @click.option("--force", is_flag=True, help="Force merge even if some checks fail")
-@click.option("--method", type=click.Choice(["merge", "squash", "rebase"]), default="merge", help="Merge method")
+@click.option(
+    "--method",
+    type=click.Choice(["merge", "squash", "rebase"]),
+    default="merge",
+    help="Merge method",
+)
 @click.option("--cleanup/--no-cleanup", default=True, help="Clean up worktree after merge")
 def merge(pr_id: str, force: bool, method: str, cleanup: bool) -> None:
     """Merge PR after approval validation."""
     try:
+        from auto.core import get_core
         from auto.integrations.github import detect_repository
         from auto.workflows.merge import execute_auto_merge
-        from auto.core import get_core
-        
+
         console.print(f"[blue]Starting merge process for PR #{pr_id}...[/blue]")
-        
+
         # Detect repository
         try:
             repo = detect_repository()
+            if repo is None:
+                console.print("[red]Error:[/red] Could not detect repository")
+                sys.exit(1)
         except Exception as e:
             console.print(f"[red]Error:[/red] Could not detect repository: {e}")
             sys.exit(1)
-        
+
         # Parse PR ID
-        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
-        
+        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip("#"))
+
         # Get worktree path if cleanup is enabled
         worktree_path = None
         if cleanup:
             try:
-                core = get_core()
+                get_core()
                 # Try to find associated worktree for this PR
                 # This would need to be implemented based on state management
                 pass
             except Exception:
                 logger.warning("Could not determine worktree path for cleanup")
-        
+
         # Execute merge
         import asyncio
-        success = asyncio.run(execute_auto_merge(
-            pr_number=pr_number,
-            owner=repo.owner,
-            repo=repo.name,
-            worktree_path=worktree_path,
-            force=force
-        ))
-        
+
+        success = asyncio.run(
+            execute_auto_merge(
+                pr_number=pr_number,
+                owner=repo.owner,
+                repo=repo.name,
+                worktree_path=worktree_path,
+                force=force,
+            )
+        )
+
         if success:
             console.print(f"[green]✓[/green] PR #{pr_number} merged successfully")
             if cleanup and worktree_path:
-                console.print(f"[green]✓[/green] Worktree cleaned up")
+                console.print("[green]✓[/green] Worktree cleaned up")
         else:
             console.print(f"[red]✗[/red] Failed to merge PR #{pr_number}")
             sys.exit(1)
-            
-    except ValueError as e:
+
+    except ValueError:
         console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
         sys.exit(1)
     except Exception as e:
@@ -1296,36 +1413,46 @@ def merge(pr_id: str, force: bool, method: str, cleanup: bool) -> None:
 
 
 @cli.command()
-@click.option("--state", "-s", default="open", type=click.Choice(["open", "closed", "all"]), help="Filter by state (default: open)")
+@click.option(
+    "--state",
+    "-s",
+    default="open",
+    type=click.Choice(["open", "closed", "all"]),
+    help="Filter by state (default: open)",
+)
 @click.option("--assignee", "-a", help="Filter by assignee username")
-@click.option("--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)")
-@click.option("--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)")
+@click.option(
+    "--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)"
+)
+@click.option(
+    "--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)"
+)
 @click.option("--web", "-w", is_flag=True, help="Open issues in web browser")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed issue information")
 def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verbose: bool) -> None:
     """List available issues for the current project."""
     try:
         from auto.integrations.github import GitHubIntegration, GitHubIntegrationError
-        
+
         # If web flag is set, delegate to gh CLI
         if web:
             try:
-                result = run_command("gh issue list --web", check=True)
+                run_command("gh issue list --web", check=True)
                 return
             except Exception as e:
                 console.print(f"[red]Error:[/red] Failed to open issues in browser: {e}")
                 sys.exit(1)
-        
+
         # Initialize GitHub integration
         try:
             github = GitHubIntegration()
         except GitHubIntegrationError as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
-        
+
         # Convert labels tuple to list
         labels_list = list(labels) if labels else None
-        
+
         if verbose:
             enable_verbose_logging()
             console.print(f"[blue]Info:[/blue] Fetching issues (state: {state}, limit: {limit})")
@@ -1333,23 +1460,20 @@ def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verb
                 console.print(f"  Assignee filter: {assignee}")
             if labels_list:
                 console.print(f"  Label filters: {', '.join(labels_list)}")
-        
+
         # Fetch issues
         try:
             issues_list = github.list_issues(
-                state=state,
-                assignee=assignee,
-                labels=labels_list,
-                limit=limit
+                state=state, assignee=assignee, labels=labels_list, limit=limit
             )
         except GitHubIntegrationError as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
-        
+
         if not issues_list:
             console.print(f"[yellow]No {state} issues found.[/yellow]")
             return
-        
+
         # Display issues in a table
         table = Table(title=f"GitHub Issues ({state})")
         table.add_column("ID", style="cyan", width=8)
@@ -1358,72 +1482,87 @@ def issues(state: str, assignee: str, labels: tuple, limit: int, web: bool, verb
         table.add_column("Assignee", style="blue", width=12)
         table.add_column("Labels", style="magenta", width=20)
         table.add_column("Updated", style="dim", width=12)
-        
+
         for issue in issues_list:
             # Format title - truncate if too long but ensure beginning is shown
             title_display = issue.title
             if len(title_display) > 57:  # Leave room for ellipsis
                 title_display = title_display[:57] + "..."
-            
+
             # Format assignee
             assignee_display = issue.assignee or "—"
-            
+
             # Format labels
             labels_display = ", ".join(issue.labels[:3]) if issue.labels else "—"
             if len(issue.labels) > 3:
                 labels_display += f" (+{len(issue.labels) - 3})"
-            
+
             # Format updated time
             if issue.updated_at:
                 updated_display = issue.updated_at.strftime("%Y-%m-%d")
             else:
                 updated_display = "—"
-            
+
             # Add status styling
             status_style = {
                 "open": "[green]open[/green]",
                 "closed": "[red]closed[/red]",
             }.get(issue.status.value.lower(), str(issue.status.value))
-            
+
             table.add_row(
                 issue.id,
                 title_display,
                 status_style,
                 assignee_display,
                 labels_display,
-                updated_display
+                updated_display,
             )
-        
+
         console.print(table)
-        
+
         # Show summary
         console.print(f"\n[bold]Found {len(issues_list)} {state} issue(s)[/bold]")
-        
+
         if verbose:
             console.print("[dim]Use 'auto fetch <issue-id>' to start working on an issue[/dim]")
             console.print("[dim]Use 'auto issues --web' to view issues in browser[/dim]")
-        
+
     except Exception as e:
         console.print(f"[red]Error:[/red] Unexpected error: {e}")
         if verbose:
             import traceback
+
             console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
 
 # Add alias for issues command
 @cli.command("ls")
-@click.option("--state", "-s", default="open", type=click.Choice(["open", "closed", "all"]), help="Filter by state (default: open)")
+@click.option(
+    "--state",
+    "-s",
+    default="open",
+    type=click.Choice(["open", "closed", "all"]),
+    help="Filter by state (default: open)",
+)
 @click.option("--assignee", "-a", help="Filter by assignee username")
-@click.option("--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)")
-@click.option("--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)")
+@click.option(
+    "--label", "-l", "labels", multiple=True, help="Filter by label (can be used multiple times)"
+)
+@click.option(
+    "--limit", "-L", default=30, type=int, help="Maximum number of issues to fetch (default: 30)"
+)
 @click.option("--web", "-w", is_flag=True, help="Open issues in web browser")
 @click.option("--verbose", "-v", is_flag=True, help="Show detailed issue information")
-def ls_alias(state: str, assignee: str, labels: tuple, limit: int, web: bool, verbose: bool) -> None:
+def ls_alias(
+    state: str, assignee: str, labels: tuple, limit: int, web: bool, verbose: bool
+) -> None:
     """List available issues for the current project (alias for 'issues')."""
     # Call the main issues command with same parameters
     ctx = click.get_current_context()
-    ctx.invoke(issues, state=state, assignee=assignee, labels=labels, limit=limit, web=web, verbose=verbose)
+    ctx.invoke(
+        issues, state=state, assignee=assignee, labels=labels, limit=limit, web=web, verbose=verbose
+    )
 
 
 @cli.command()
@@ -1434,92 +1573,101 @@ def show(issue_id: str, web: bool, verbose: bool) -> None:
     """Show detailed information for a specific issue."""
     try:
         from auto.integrations.github import GitHubIntegration, GitHubIntegrationError
-        
+
         # Parse issue identifier
         identifier = IssueIdentifier.parse(issue_id)
-        
+
         # If web flag is set, delegate to gh CLI
         if web:
             try:
-                result = run_command(f"gh issue view {identifier.issue_id} --web", check=True)
+                run_command(f"gh issue view {identifier.issue_id} --web", check=True)
                 return
             except Exception as e:
                 console.print(f"[red]Error:[/red] Failed to open issue in browser: {e}")
                 sys.exit(1)
-        
+
         # Initialize GitHub integration
         try:
             github = GitHubIntegration()
         except GitHubIntegrationError as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
-        
+
         if verbose:
             enable_verbose_logging()
-            console.print(f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}")
-        
+            console.print(
+                f"[blue]Info:[/blue] Fetching {identifier.provider.value} issue: {identifier.issue_id}"
+            )
+
         # Fetch issue details
         try:
             issue = github.fetch_issue(identifier.issue_id)
         except GitHubIntegrationError as e:
             console.print(f"[red]Error:[/red] {e}")
             sys.exit(1)
-        
+
         # Display issue details
         console.print(f"[bold cyan]Issue {issue.id}[/bold cyan]: [bold]{issue.title}[/bold]")
         console.print()
-        
+
         # Show metadata
         metadata_table = Table(show_header=False, box=None, padding=(0, 1))
         metadata_table.add_column("Field", style="dim", width=12)
         metadata_table.add_column("Value")
-        
-        metadata_table.add_row("Status:", f"[{'green' if issue.status.value.lower() == 'open' else 'red'}]{issue.status.value}[/]")
+
+        metadata_table.add_row(
+            "Status:",
+            f"[{'green' if issue.status.value.lower() == 'open' else 'red'}]{issue.status.value}[/]",
+        )
         metadata_table.add_row("Assignee:", issue.assignee or "Unassigned")
-        
+
         if issue.labels:
             labels_display = ", ".join([f"[magenta]{label}[/magenta]" for label in issue.labels])
             metadata_table.add_row("Labels:", labels_display)
         else:
             metadata_table.add_row("Labels:", "None")
-        
+
         if verbose:
             if issue.created_at:
-                metadata_table.add_row("Created:", issue.created_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+                metadata_table.add_row(
+                    "Created:", issue.created_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                )
             if issue.updated_at:
-                metadata_table.add_row("Updated:", issue.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC"))
+                metadata_table.add_row(
+                    "Updated:", issue.updated_at.strftime("%Y-%m-%d %H:%M:%S UTC")
+                )
             if issue.url:
                 metadata_table.add_row("URL:", issue.url)
-        
+
         console.print(metadata_table)
         console.print()
-        
+
         # Show description
         if issue.description and issue.description.strip():
             console.print("[bold]Description:[/bold]")
             console.print()
             # Render markdown-like content with basic formatting
-            description_lines = issue.description.strip().split('\n')
+            description_lines = issue.description.strip().split("\n")
             for line in description_lines:
-                if line.strip().startswith('# '):
+                if line.strip().startswith("# "):
                     console.print(f"[bold]{line.strip()[2:]}[/bold]")
-                elif line.strip().startswith('## '):
+                elif line.strip().startswith("## "):
                     console.print(f"[bold]{line.strip()[3:]}[/bold]")
-                elif line.strip().startswith('- ') or line.strip().startswith('* '):
+                elif line.strip().startswith("- ") or line.strip().startswith("* "):
                     console.print(f"  • {line.strip()[2:]}")
-                elif line.strip().startswith('```'):
+                elif line.strip().startswith("```"):
                     console.print(f"[dim]{line}[/dim]")
                 else:
                     console.print(line)
         else:
             console.print("[dim]No description provided[/dim]")
-        
+
         console.print()
-        
+
         if not web and not verbose:
             console.print(f"[dim]Use 'auto show {issue_id} --web' to view in browser[/dim]")
             console.print(f"[dim]Use 'auto fetch {issue_id}' to start working on this issue[/dim]")
-        
+
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)
@@ -1527,6 +1675,7 @@ def show(issue_id: str, web: bool, verbose: bool) -> None:
         console.print(f"[red]Error:[/red] Unexpected error: {e}")
         if verbose:
             import traceback
+
             console.print("[dim]" + traceback.format_exc() + "[/dim]")
         sys.exit(1)
 
@@ -1537,14 +1686,16 @@ def run(issue_id: str) -> None:
     """Run complete workflow for issue (Phase 6+)."""
     try:
         identifier = IssueIdentifier.parse(issue_id)
-        console.print(f"[blue]Info:[/blue] Would run complete workflow for {identifier.provider.value} issue: {identifier.issue_id}")
+        console.print(
+            f"[blue]Info:[/blue] Would run complete workflow for {identifier.provider.value} issue: {identifier.issue_id}"
+        )
         console.print("[yellow]Note:[/yellow] Full implementation coming in Phase 6")
-        
+
         # For Phase 1, just create a workflow state
         core = get_core()
-        state = core.create_workflow_state(identifier.issue_id)
+        core.create_workflow_state(identifier.issue_id)
         console.print(f"[green]✓[/green] Created workflow state for {identifier.issue_id}")
-        
+
     except ValueError as e:
         console.print(f"[red]Error:[/red] {e}")
         sys.exit(1)

@@ -1,12 +1,11 @@
 """Integration tests for CLI status command."""
 
-from click.testing import CliRunner
 from unittest.mock import Mock, patch
+
+from click.testing import CliRunner
 
 from auto.cli import cli
 from auto.models import (
-    WorkflowState,
-    WorkflowStatus,
     WorktreeInfo,
 )
 
@@ -35,12 +34,19 @@ class TestStatusCommand:
         mock_core = Mock()
         mock_get_core.return_value = mock_core
 
-        # Mock workflow state
-        mock_state = Mock(spec=WorkflowState)
+        # Mock workflow state - use plain Mock to avoid auto-generating async methods
+        mock_state = Mock()
         mock_state.issue_id = "#123"
-        mock_state.status = WorkflowStatus.IMPLEMENTING
-        mock_state.ai_status = Mock()
-        mock_state.ai_status.value = "not_started"
+
+        # Create proper status mock with .value attribute
+        status_mock = Mock()
+        status_mock.value = "implementing"
+        mock_state.status = status_mock
+
+        ai_status_mock = Mock()
+        ai_status_mock.value = "not_started"
+        mock_state.ai_status = ai_status_mock
+
         mock_state.pr_number = None
         mock_state.branch = "auto/feature/123"
         mock_state.updated_at = datetime(2024, 1, 15, 10, 0, 0)
@@ -72,18 +78,26 @@ class TestStatusCommand:
         # Mock worktree info
         mock_worktree_info = Mock(spec=WorktreeInfo)
         mock_worktree_info.path = "/tmp/test-worktrees/auto-feature-123"
-        mock_worktree_info.exists.return_value = True
+        # Use a simple lambda to ensure it's not async
+        mock_worktree_info.exists = Mock(return_value=True)
 
         # Mock repository
         mock_repository = Mock()
         mock_repository.full_name = "owner/repo"
 
-        # Mock workflow state
-        mock_state = Mock(spec=WorkflowState)
+        # Mock workflow state - use plain Mock to avoid auto-generating async methods
+        mock_state = Mock()
         mock_state.issue_id = "#123"
-        mock_state.status = WorkflowStatus.IMPLEMENTING
-        mock_state.ai_status = Mock()
-        mock_state.ai_status.value = "not_started"
+
+        # Create proper status mock with .value attribute
+        status_mock = Mock()
+        status_mock.value = "implementing"
+        mock_state.status = status_mock
+
+        ai_status_mock = Mock()
+        ai_status_mock.value = "not_started"
+        mock_state.ai_status = ai_status_mock
+
         mock_state.pr_number = None
         mock_state.branch = "auto/feature/123"
         mock_state.updated_at = datetime(2024, 1, 15, 10, 0, 0)

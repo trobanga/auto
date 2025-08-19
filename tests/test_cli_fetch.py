@@ -1,7 +1,8 @@
 """Integration tests for CLI fetch command."""
 
-from click.testing import CliRunner
 from unittest.mock import Mock, patch
+
+from click.testing import CliRunner
 
 from auto.cli import cli
 from auto.models import (

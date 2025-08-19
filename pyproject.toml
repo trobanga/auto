@@ -7,7 +7,7 @@ name = "auto"
 version = "0.1.0"
 description = "Automatic User Task Orchestrator - automates workflow from issue to merged PR"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.12"
 authors = [
     {name = "trobanga", email = "trobanga@example.com"},
 ]
@@ -16,10 +16,6 @@ classifiers = [
     "Intended Audience :: Developers",
     "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
@@ -37,10 +33,11 @@ dev = [
     "pytest-trio>=0.8.0",
     "trio>=0.22.0",
     "pytest-cov>=4.0.0",
-    "black>=23.0.0",
-    "isort>=5.12.0",
-    "flake8>=6.0.0",
+    "pytest-timeout>=2.1.0",
+    "ruff>=0.1.0",
     "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "psutil>=5.9.0",
 ]
 
 [project.scripts]
@@ -55,16 +52,30 @@ Issues = "https://github.com/trobanga/auto/issues"
 where = ["."]
 include = ["auto*"]
 
-[tool.black]
+[tool.ruff]
+target-version = "py312"
 line-length = 100
-target-version = ['py38']
 
-[tool.isort]
-profile = "black"
-line_length = 100
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by formatter
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
