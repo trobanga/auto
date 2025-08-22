@@ -7,7 +7,7 @@ from typing import List, Optional
 from auto.config import get_config
 from auto.models import IssueIdentifier, WorkflowState, WorkflowStatus
 from auto.utils.logger import get_logger
-from auto.utils.shell import get_git_root
+from auto.utils.shell import get_git_root, get_main_repo_root
 
 logger = get_logger(__name__)
 
@@ -23,13 +23,17 @@ class AutoCore:
     def _get_state_dir(self) -> Path:
         """Get state directory path.
         
+        Always uses the main repository's state directory, even when running from a worktree.
+        
         Returns:
             State directory path
         """
-        git_root = get_git_root()
-        if git_root:
-            state_dir = git_root / ".auto" / "state"
+        # Use main repo root to ensure state files are found from worktrees
+        main_repo_root = get_main_repo_root()
+        if main_repo_root:
+            state_dir = main_repo_root / ".auto" / "state"
         else:
+            # Fallback to current directory
             state_dir = Path.cwd() / ".auto" / "state"
         
         state_dir.mkdir(parents=True, exist_ok=True)
@@ -93,6 +97,28 @@ class AutoCore:
             
         except Exception as e:
             logger.error(f"Failed to load workflow state for {issue_id}: {e}")
+            return None
+    
+    def get_workflow_state_by_pr(self, pr_number: int) -> Optional[WorkflowState]:
+        """Get workflow state by PR number.
+        
+        Args:
+            pr_number: Pull request number
+            
+        Returns:
+            Workflow state or None if not found
+        """
+        try:
+            # Search through all workflow states to find one with matching PR number
+            states = self.get_workflow_states()
+            for state in states:
+                if state.pr_number == pr_number:
+                    return state
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to find workflow state for PR #{pr_number}: {e}")
             return None
     
     def save_workflow_state(self, state: WorkflowState) -> None:

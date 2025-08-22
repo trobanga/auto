@@ -1061,8 +1061,272 @@ class ReviewUpdateWorkflow:
             
             comment_body = "\n".join(comment_parts)
             
-            # Add comment to PR via GitHub API
-            await self.github.add_pr_comment(repository, pr_number, comment_body)
+            # Add comment to PR via gh CLI
+            import subprocess
+            try:
+                comment_cmd = [
+                    "gh", "pr", "comment", str(pr_number),
+                    "--repo", repository,
+                    "--body", comment_body
+                ]
+                subprocess.run(comment_cmd, check=True, capture_output=True, text=True)
+                self.logger.info(f"Added update comment to PR #{pr_number}")
+            except subprocess.CalledProcessError as e:
+                self.logger.warning(f"Failed to add comment to PR #{pr_number}: {e}")
             
         except Exception as e:
             self.logger.warning(f"Failed to add update comment to PR: {e}")
+
+
+async def execute_review_update(
+    pr_number: int,
+    owner: str,
+    repo: str,
+    force_update: bool = False,
+    agent_override: Optional[str] = None
+) -> bool:
+    """
+    Standalone function to execute review updates for a PR.
+    
+    This is a wrapper around ReviewUpdateWorkflow that handles all the setup
+    and integration instantiation needed by the CLI.
+    
+    Args:
+        pr_number: Pull request number
+        owner: Repository owner
+        repo: Repository name
+        force_update: Whether to force update even if no comments
+        agent_override: Optional AI agent override
+        
+    Returns:
+        True if update was successful, False otherwise
+    """
+    from ..config import get_config
+    from ..models import Issue, ReviewComment, IssueProvider, IssueStatus
+    from ..integrations.github import GitHubIntegration
+    from ..integrations.git import GitWorktreeManager
+    from ..integrations.ai import ClaudeIntegration
+    from .review_comment import ReviewCommentProcessor
+    from ..core import get_core
+    
+    logger = get_logger(f"{__name__}.execute_review_update")
+    
+    try:
+        logger.info(f"Starting review update for PR #{pr_number} in {owner}/{repo}")
+        
+        # Get configuration
+        config = get_config()
+        
+        # Create integrations
+        github_integration = GitHubIntegration()  # No config parameter needed
+        git_integration = GitWorktreeManager(config)
+        ai_integration = ClaudeIntegration(config.ai)
+        if agent_override:
+            ai_integration.default_agent = agent_override
+        
+        # Use GitHub review integration for review-specific operations
+        from ..integrations.review import GitHubReviewIntegration
+        review_integration = GitHubReviewIntegration()
+        
+        comment_processor = ReviewCommentProcessor(
+            github_integration, ai_integration
+        )
+        
+        # Create workflow instance
+        workflow = ReviewUpdateWorkflow(
+            github_integration,
+            git_integration,
+            ai_integration,
+            comment_processor
+        )
+        
+        # Get PR details to find worktree and get comments
+        repository = f"{owner}/{repo}"
+        
+        # Get PR info using gh CLI directly
+        import subprocess
+        import json
+        try:
+            pr_cmd = [
+                "gh", "pr", "view", str(pr_number),
+                "--repo", repository,
+                "--json", "title,body,headRefName,state,url,assignees,labels,createdAt,updatedAt"
+            ]
+            result = subprocess.run(pr_cmd, capture_output=True, text=True, check=True)
+            pr_info = json.loads(result.stdout)
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Could not get PR #{pr_number} info: {e}")
+            # Provide helpful error message for common issues
+            if "Could not resolve to a PullRequest" in str(e.stderr or e):
+                logger.error(f"PR #{pr_number} does not exist in repository {repository}")
+                logger.info("Use 'gh pr list' to see available pull requests")
+            return False
+        except json.JSONDecodeError as e:
+            logger.error(f"Could not parse PR #{pr_number} info: {e}")
+            return False
+        
+        # Get review comments using review integration
+        # Create repository object for the review integration
+        from ..models import GitHubRepository
+        repo_obj = GitHubRepository(owner=owner, name=repo)
+        comments = review_integration.get_review_comments(pr_number, repo_obj)
+        if not comments and not force_update:
+            logger.info(f"No review comments found for PR #{pr_number}")
+            return True  # No comments to address is considered success
+        
+        # Convert to ReviewComment model objects if needed
+        review_comments = []
+        for comment in comments:
+            # The review integration returns ReviewComment objects from review.py
+            # but the workflow expects models.ReviewComment objects
+            if hasattr(comment, 'id') and hasattr(comment, 'body'):
+                # Convert from review.ReviewComment to models.ReviewComment
+                review_comment = ReviewComment(
+                    id=comment.id,
+                    body=comment.body,
+                    path=getattr(comment, 'path', None),
+                    line=getattr(comment, 'line', None),
+                    author=getattr(comment, 'author', 'unknown'),
+                    created_at=getattr(comment, 'created_at', ''),
+                    url=getattr(comment, 'url', '')
+                )
+            else:
+                # Assume it's already the right type
+                review_comment = comment
+            review_comments.append(review_comment)
+        
+        # Find the issue ID associated with this PR to locate the correct worktree
+        core = get_core()
+        workflow_state = core.get_workflow_state_by_pr(pr_number)
+        
+        if workflow_state and workflow_state.issue_id:
+            # Use the issue ID from the workflow state
+            issue_id = workflow_state.issue_id
+            logger.info(f"Found workflow state for PR #{pr_number}, issue ID: {issue_id}")
+        else:
+            # Try to extract issue ID from PR body
+            pr_body = pr_info.get('body', '')
+            issue_id = None
+            
+            # Look for common patterns: "Closes #12", "Fixes #12", "Resolves #12"
+            import re
+            patterns = [
+                r'(?:closes|fixes|resolves)\s+#(\d+)',
+                r'issue\s+#(\d+)',
+                r'#(\d+)'
+            ]
+            
+            for pattern in patterns:
+                match = re.search(pattern, pr_body, re.IGNORECASE)
+                if match:
+                    issue_id = f"#{match.group(1)}"
+                    logger.info(f"Extracted issue ID from PR body: {issue_id}")
+                    break
+            
+            if not issue_id:
+                # Fallback: use PR number as issue ID (might work for simple cases)
+                issue_id = f"#{pr_number}"
+                logger.warning(f"Could not find issue ID for PR #{pr_number}, using PR number as fallback")
+        
+        # Create a minimal Issue object for context
+        issue = Issue(
+            id=issue_id,  # Use the actual issue ID, not PR number
+            provider=IssueProvider.GITHUB,  # Required field
+            title=pr_info.get('title', f"PR #{pr_number}"),
+            description=pr_info.get('body', ''),  # Use 'description' not 'body'
+            status=IssueStatus.OPEN if pr_info.get('state', 'open') == 'open' else IssueStatus.CLOSED,  # Required field
+            assignee=pr_info.get('assignees', [{}])[0].get('login') if pr_info.get('assignees') else None,
+            labels=[label.get('name') for label in pr_info.get('labels', [])],
+            url=pr_info.get('url', ''),
+            created_at=pr_info.get('createdAt', ''),
+            updated_at=pr_info.get('updatedAt', '')
+        )
+        
+        # Determine worktree path using the issue ID (not PR number)
+        # Use GitWorktreeManager to generate the correct path that was used during creation
+        try:
+            # Generate the worktree path that would have been created for this issue
+            branch_name = git_integration.generate_branch_name(issue)
+            worktree_path = str(git_integration.generate_worktree_path(branch_name))
+            
+            logger.info(f"Generated worktree path for issue {issue_id}: {worktree_path}")
+            
+            # Check if worktree exists
+            import os
+            if not os.path.exists(worktree_path):
+                # If the exact path doesn't exist, try to find the worktree using the issue ID
+                # Get the main repo name for worktree base calculation
+                from ..utils.shell import get_main_repo_root
+                main_repo = get_main_repo_root()
+                project_name = main_repo.name if main_repo else "auto"
+                
+                worktree_base = config.defaults.worktree_base.format(project=project_name)
+                
+                # Make worktree_base absolute if it's relative
+                from pathlib import Path
+                if not Path(worktree_base).is_absolute():
+                    if main_repo:
+                        worktree_base = str(main_repo / worktree_base)
+                    else:
+                        worktree_base = str(Path.cwd() / worktree_base)
+                
+                # Build potential paths based on the issue ID (not PR number)
+                clean_issue_id = issue_id.lstrip('#')
+                potential_paths = [
+                    worktree_path,  # The calculated path
+                    f"{worktree_base}/auto-task-{clean_issue_id}",
+                    f"{worktree_base}/auto-feature-{clean_issue_id}",
+                    f"{worktree_base}/auto-enhancement-{clean_issue_id}",
+                    f"{worktree_base}/auto-bug-{clean_issue_id}",
+                    f"{worktree_base}/auto-{clean_issue_id}",
+                    f"{worktree_base}/{branch_name}",
+                ]
+                
+                found_path = None
+                for path in potential_paths:
+                    if os.path.exists(path):
+                        found_path = path
+                        logger.info(f"Found worktree at: {path}")
+                        break
+                
+                if not found_path:
+                    logger.error(f"Could not find worktree for PR #{pr_number} (issue {issue_id})")
+                    logger.info("Available worktree patterns checked:")
+                    for path in potential_paths:
+                        logger.info(f"  - {path}")
+                    return False
+                
+                worktree_path = found_path
+            else:
+                logger.info(f"Found worktree at expected path: {worktree_path}")
+                
+        except Exception as e:
+            logger.error(f"Error determining worktree path: {e}")
+            return False
+        
+        # Execute review updates
+        results = await workflow.execute_review_updates(
+            pr_number=pr_number,
+            repository=repository,
+            worktree_path=worktree_path,
+            issue=issue,
+            comments=review_comments
+        )
+        
+        # Check if updates were successful
+        successful_count = sum(1 for r in results if r.status.value == "completed")
+        total_count = len(results)
+        
+        if total_count == 0:
+            logger.info("No updates were needed")
+            return True
+        
+        success_rate = successful_count / total_count
+        logger.info(f"Update completion: {successful_count}/{total_count} successful ({success_rate:.1%})")
+        
+        # Consider it successful if at least 80% of updates completed
+        return success_rate >= 0.8
+        
+    except Exception as e:
+        logger.error(f"Review update failed: {e}")
+        return False

@@ -260,6 +260,37 @@ def get_git_root() -> Optional[Path]:
         return None
 
 
+def get_main_repo_root() -> Optional[Path]:
+    """Get main repository root directory (not worktree).
+    
+    This function finds the main repository even when running from a worktree.
+    
+    Returns:
+        Main repository root path or None if not in a git repo
+    """
+    try:
+        # Get the common git directory (points to main repo .git)
+        result = run_command("git rev-parse --git-common-dir", check=True)
+        git_common_dir = Path(result.stdout.strip())
+        
+        # If it's a relative path, resolve it
+        if not git_common_dir.is_absolute():
+            git_root = get_git_root()
+            if git_root:
+                git_common_dir = git_root / git_common_dir
+        
+        # The main repo is the parent of the .git directory
+        if git_common_dir.name == ".git":
+            return git_common_dir.parent
+        else:
+            # It's a worktree, the common dir points to main repo's .git
+            return git_common_dir.parent
+            
+    except ShellError:
+        # Fallback to regular git root
+        return get_git_root()
+
+
 def get_current_branch() -> Optional[str]:
     """Get current git branch name.
     
