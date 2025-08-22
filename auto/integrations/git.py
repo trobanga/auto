@@ -8,7 +8,7 @@ from typing import List, Optional
 from auto.config import Config
 from auto.models import Issue, WorktreeInfo, IssueType
 from auto.utils.logger import get_logger
-from auto.utils.shell import run_command, get_git_root, ShellError
+from auto.utils.shell import run_command, get_git_root, get_main_repo_root, ShellError
 
 logger = get_logger(__name__)
 
@@ -284,10 +284,10 @@ class GitWorktreeManager:
         Returns:
             Worktree path
         """
-        # Get project name for worktree base
-        git_root = get_git_root()
-        if git_root:
-            project_name = git_root.name
+        # Get project name from main repository (not worktree)
+        main_repo_root = get_main_repo_root()
+        if main_repo_root:
+            project_name = main_repo_root.name
         else:
             project_name = "project"
         
@@ -297,8 +297,8 @@ class GitWorktreeManager:
         
         # Make worktree base absolute if it's relative
         if not worktree_base.is_absolute():
-            if git_root:
-                worktree_base = git_root / worktree_base
+            if main_repo_root:
+                worktree_base = main_repo_root / worktree_base
             else:
                 worktree_base = Path.cwd() / worktree_base
         

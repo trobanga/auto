@@ -43,6 +43,11 @@ from auto.workflows.review import (
     ReviewWorkflowError,
 )
 
+from auto.workflows.review_update import (
+    execute_review_update,
+    ReviewUpdateWorkflow,
+)
+
 __all__ = [
     # Fetch workflow
     "fetch_issue_workflow",
@@ -81,4 +86,8 @@ __all__ = [
     "ReviewCycleStatus",
     "ReviewCycleState",
     "ReviewWorkflowError",
+    
+    # Review update workflow
+    "execute_review_update",
+    "ReviewUpdateWorkflow",
 ]

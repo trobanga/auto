@@ -1144,16 +1144,16 @@ def review(pr_id: str, force: bool, agent: Optional[str]) -> None:
 
 
 @cli.command()
-@click.argument("pr_id")
+@click.argument("id")
 @click.option("--force", is_flag=True, help="Force update even if no unresolved comments")
 @click.option("--agent", default=None, help="Override AI agent for updates")
-def update(pr_id: str, force: bool, agent: Optional[str]) -> None:
-    """Update PR based on review comments."""
+def update(id: str, force: bool, agent: Optional[str]) -> None:
+    """Update PR based on review comments. Accepts either issue ID (e.g., '#12') or PR ID (e.g., '23')."""
     try:
         from auto.integrations.github import detect_repository
         from auto.workflows.review_update import execute_review_update
-        
-        console.print(f"[blue]Updating PR #{pr_id} based on review comments...[/blue]")
+        from auto.core import get_core
+        from auto.models import IssueIdentifier
         
         # Detect repository
         try:
@@ -1162,8 +1162,50 @@ def update(pr_id: str, force: bool, agent: Optional[str]) -> None:
             console.print(f"[red]Error:[/red] Could not detect repository: {e}")
             sys.exit(1)
         
-        # Parse PR ID
-        pr_number = int(pr_id) if pr_id.isdigit() else int(pr_id.lstrip('#'))
+        # Determine if this is an issue ID or PR ID
+        pr_number = None
+        
+        try:
+            # Try to parse as issue identifier first
+            if not id.isdigit():
+                # If it's not just a number, try to parse as issue ID
+                identifier = IssueIdentifier.parse(id)
+                issue_id = identifier.issue_id
+                
+                # Look up the PR number from workflow state
+                core = get_core()
+                state = core.get_workflow_state(issue_id)
+                if state and state.pr_number:
+                    pr_number = state.pr_number
+                    console.print(f"[blue]Found PR #{pr_number} for issue {issue_id}[/blue]")
+                else:
+                    console.print(f"[red]Error:[/red] No PR found for issue {issue_id}")
+                    console.print(f"[yellow]Hint:[/yellow] Make sure the issue has been processed and a PR created")
+                    sys.exit(1)
+            else:
+                # It's a plain number - could be either issue or PR
+                # First try as issue ID (more common usage pattern)
+                core = get_core()
+                issue_id = f"#{id}"
+                state = core.get_workflow_state(issue_id)
+                
+                if state and state.pr_number:
+                    # Found it as an issue ID
+                    pr_number = state.pr_number
+                    console.print(f"[blue]Found PR #{pr_number} for issue {issue_id}[/blue]")
+                else:
+                    # Try as PR number
+                    pr_number = int(id)
+                    state = core.get_workflow_state_by_pr(pr_number)
+                    if state:
+                        console.print(f"[blue]Updating PR #{pr_number} (issue {state.issue_id})[/blue]")
+                    else:
+                        # Assume it's a PR number and proceed (user might be working without workflow state)
+                        console.print(f"[blue]Updating PR #{pr_number} (no workflow state found)[/blue]")
+        
+        except Exception as e:
+            console.print(f"[red]Error:[/red] Could not parse identifier '{id}': {e}")
+            sys.exit(1)
         
         # Execute review update
         import asyncio
@@ -1183,7 +1225,7 @@ def update(pr_id: str, force: bool, agent: Optional[str]) -> None:
             sys.exit(1)
             
     except ValueError as e:
-        console.print(f"[red]Error:[/red] Invalid PR ID format: {pr_id}")
+        console.print(f"[red]Error:[/red] Invalid ID format: {id}")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Update command failed: {e}")
