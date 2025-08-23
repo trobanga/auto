@@ -4,6 +4,7 @@ This module handles all validation logic for determining if a PR is eligible
 for merging, including review validation, status checks, and branch protection.
 """
 
+import json
 from datetime import datetime
 from typing import Any
 
@@ -70,9 +71,13 @@ async def validate_merge_eligibility(
 
         # Check for required status checks
         if not force:
-            checks_valid, check_errors = await validate_status_checks(pr_number, owner, repo)
-            if not checks_valid:
-                errors.extend(check_errors)
+            config = get_config()
+            validation_result = await _validate_status_checks(
+                pr_number, GitHubRepository(owner=owner, name=repo), config
+            )
+            if not validation_result.success:
+                errors.append(validation_result.message)
+                errors.extend(validation_result.actionable_items)
 
         # Check branch protection rules
         protection_valid, protection_errors = await validate_branch_protection(
@@ -273,34 +278,389 @@ async def validate_reviews(
         )
 
 
-async def validate_status_checks(pr_number: int, owner: str, repo: str) -> tuple[bool, list[str]]:
-    """Validate that all required status checks are passing."""
-    errors = []
+async def _validate_status_checks(
+    pr_number: int, repository: GitHubRepository, config: Config
+) -> ValidationResult:
+    """Validate that all required status checks are passing.
+
+    This function implements CI/CD status check validation to ensure all required
+    checks pass before merge operations, with configurable timeout behavior for
+    pending checks.
+
+    Args:
+        pr_number: Pull request number
+        repository: Repository context
+        config: Configuration object
+
+    Returns:
+        ValidationResult with success status and detailed information
+    """
+    import asyncio
+    import time
+
+    from auto.models import ValidationResult
+    from auto.utils.shell import ShellError
+
+    logger.debug(f"Validating status checks for PR #{pr_number}")
+
+    actionable_items = []
+    details = {}
 
     try:
-        pr_info = await _get_pr_info(pr_number, owner, repo)
-        status_rollup = pr_info.get("statusCheckRollup", [])
+        # Get configuration values
+        wait_for_checks = getattr(config.workflows, "wait_for_checks", True)
+        check_timeout = getattr(config.workflows, "check_timeout", 600)  # 10 minutes default
+        required_status_checks = getattr(config.workflows, "required_status_checks", [])
+        status_check_retries = getattr(config.github, "status_check_retries", 3)
+        status_check_interval = getattr(config.github, "status_check_interval", 30)
 
-        # Check for any failing status checks
-        failing_checks = [
-            check for check in status_rollup if check.get("state") in ["FAILURE", "ERROR"]
-        ]
+        # Get PR information to extract the latest commit SHA
+        pr_info = await _get_pr_info(pr_number, repository.owner, repository.name)
+        if not pr_info:
+            return ValidationResult(
+                success=False,
+                message="Failed to retrieve PR information",
+                details={"error": "Could not fetch PR details"},
+                actionable_items=["Check if the PR exists and is accessible"],
+            )
 
-        if failing_checks:
-            check_names = [check.get("name", "unknown") for check in failing_checks]
-            errors.append(f"Failing status checks: {', '.join(check_names)}")
+        # Get the head commit SHA
+        head_sha = pr_info.get("headRefOid")
+        if not head_sha:
+            # Fallback to getting commit info from PR
+            head_sha = await _get_pr_head_sha(pr_number, repository.owner, repository.name)
 
-        # Check for any pending checks
-        pending_checks = [check for check in status_rollup if check.get("state") == "PENDING"]
+        if not head_sha:
+            return ValidationResult(
+                success=False,
+                message="Failed to retrieve PR head commit SHA",
+                details={"error": "Could not determine latest commit"},
+                actionable_items=["Ensure the PR has commits and try again"],
+            )
 
-        if pending_checks:
-            check_names = [check.get("name", "unknown") for check in pending_checks]
-            errors.append(f"Pending status checks: {', '.join(check_names)}")
+        details["head_sha"] = head_sha
 
-        return len(errors) == 0, errors
+        # Fetch branch protection rules to identify required checks
+        protected_branch = pr_info.get("baseRefName", "main")
+        required_checks_from_protection = await _get_required_status_checks_from_protection(
+            repository.owner, repository.name, protected_branch
+        )
+
+        # Combine required checks from config and branch protection
+        all_required_checks = set(required_status_checks + required_checks_from_protection)
+        details["required_checks"] = list(all_required_checks)
+
+        # Start monitoring status checks with timeout
+        start_time = time.time()
+        retry_count = 0
+
+        while retry_count <= status_check_retries:
+            try:
+                # Fetch current status checks
+                status_data = await _fetch_status_checks(
+                    repository.owner, repository.name, head_sha
+                )
+
+                if not status_data:
+                    if retry_count < status_check_retries:
+                        logger.debug(
+                            f"No status data available, retrying in {status_check_interval}s..."
+                        )
+                        retry_count += 1
+                        await asyncio.sleep(status_check_interval)
+                        continue
+                    else:
+                        # No status checks found - this might be OK if none are required
+                        if not all_required_checks:
+                            return ValidationResult(
+                                success=True,
+                                message="No status checks required or found",
+                                details=details,
+                                actionable_items=[],
+                            )
+                        else:
+                            return ValidationResult(
+                                success=False,
+                                message="Required status checks not found",
+                                details=details,
+                                actionable_items=[
+                                    f"Configure required status checks: {', '.join(all_required_checks)}"
+                                ],
+                            )
+
+                # Parse status check results
+                failing_checks = []
+                pending_checks = []
+                passing_checks = []
+
+                # Handle both statuses and check runs from the combined status
+                all_checks = []
+
+                # Add traditional status API results
+                if "statuses" in status_data:
+                    for status in status_data.get("statuses", []):
+                        all_checks.append(
+                            {
+                                "name": status.get("context", "unknown"),
+                                "state": status.get("state", "unknown").upper(),
+                                "description": status.get("description", ""),
+                                "target_url": status.get("target_url"),
+                            }
+                        )
+
+                # Add check runs (newer GitHub Checks API)
+                if "check_runs" in status_data:
+                    for check in status_data.get("check_runs", []):
+                        # Map check run conclusions to status states
+                        conclusion = check.get("conclusion", "").upper()
+                        if conclusion == "SUCCESS":
+                            state = "SUCCESS"
+                        elif conclusion in ["FAILURE", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"]:
+                            state = "FAILURE"
+                        elif conclusion == "NEUTRAL":
+                            state = "SUCCESS"  # Neutral is typically considered passing
+                        else:
+                            state = "PENDING"  # In progress or queued
+
+                        all_checks.append(
+                            {
+                                "name": check.get("name", "unknown"),
+                                "state": state,
+                                "description": check.get("output", {}).get("summary", ""),
+                                "target_url": check.get("html_url"),
+                            }
+                        )
+
+                # Categorize checks
+                for check in all_checks:
+                    check_state = check["state"]
+
+                    if check_state in ["FAILURE", "ERROR"]:
+                        failing_checks.append(check)
+                    elif check_state == "PENDING":
+                        pending_checks.append(check)
+                    elif check_state == "SUCCESS":
+                        passing_checks.append(check)
+
+                details["all_checks"] = all_checks
+                details["failing_checks"] = failing_checks
+                details["pending_checks"] = pending_checks
+                details["passing_checks"] = passing_checks
+
+                # Check for failing required checks
+                failing_required = []
+                for check in failing_checks:
+                    if not all_required_checks or check["name"] in all_required_checks:
+                        failing_required.append(check)
+
+                if failing_required:
+                    failing_names = [check["name"] for check in failing_required]
+                    actionable_items.append(
+                        f"Fix failing status checks: {', '.join(failing_names)}"
+                    )
+                    for check in failing_required:
+                        if check.get("target_url"):
+                            actionable_items.append(f"Check details: {check['target_url']}")
+
+                    return ValidationResult(
+                        success=False,
+                        message=f"Required status checks are failing: {', '.join(failing_names)}",
+                        details=details,
+                        actionable_items=actionable_items,
+                    )
+
+                # Check for pending required checks
+                pending_required = []
+                for check in pending_checks:
+                    if not all_required_checks or check["name"] in all_required_checks:
+                        pending_required.append(check)
+
+                if pending_required and wait_for_checks:
+                    elapsed_time = time.time() - start_time
+
+                    if elapsed_time < check_timeout:
+                        pending_names = [check["name"] for check in pending_required]
+                        logger.info(
+                            f"Waiting for pending status checks: {', '.join(pending_names)} (elapsed: {elapsed_time:.0f}s)"
+                        )
+
+                        # Wait before checking again
+                        await asyncio.sleep(status_check_interval)
+                        retry_count = 0  # Reset retry count since we're making progress
+                        continue
+                    else:
+                        # Timeout reached
+                        pending_names = [check["name"] for check in pending_required]
+                        actionable_items.append(
+                            f"Status checks timed out after {check_timeout}s: {', '.join(pending_names)}"
+                        )
+                        for check in pending_required:
+                            if check.get("target_url"):
+                                actionable_items.append(f"Check details: {check['target_url']}")
+
+                        return ValidationResult(
+                            success=False,
+                            message=f"Required status checks timed out: {', '.join(pending_names)}",
+                            details=details,
+                            actionable_items=actionable_items,
+                        )
+                elif pending_required and not wait_for_checks:
+                    # Not waiting for checks, but they're still pending
+                    pending_names = [check["name"] for check in pending_required]
+                    actionable_items.append(
+                        f"Status checks are pending: {', '.join(pending_names)}"
+                    )
+
+                    return ValidationResult(
+                        success=False,
+                        message=f"Required status checks are pending: {', '.join(pending_names)}",
+                        details=details,
+                        actionable_items=actionable_items,
+                    )
+
+                # Check if all required checks are present and passing
+                if all_required_checks:
+                    passing_required_names = {
+                        check["name"]
+                        for check in passing_checks
+                        if check["name"] in all_required_checks
+                    }
+                    missing_checks = all_required_checks - passing_required_names
+
+                    if missing_checks:
+                        actionable_items.append(
+                            f"Missing required status checks: {', '.join(missing_checks)}"
+                        )
+                        return ValidationResult(
+                            success=False,
+                            message=f"Required status checks not found: {', '.join(missing_checks)}",
+                            details=details,
+                            actionable_items=actionable_items,
+                        )
+
+                # All checks are passing
+                passing_names = [check["name"] for check in passing_checks]
+                logger.info(
+                    f"All required status checks are passing: {', '.join(passing_names) if passing_names else 'none required'}"
+                )
+
+                return ValidationResult(
+                    success=True,
+                    message=f"All status checks passing ({len(passing_checks)} checks)",
+                    details=details,
+                    actionable_items=[],
+                )
+
+            except ShellError as e:
+                logger.warning(
+                    f"Error fetching status checks (attempt {retry_count + 1}): {e.stderr}"
+                )
+                if retry_count < status_check_retries:
+                    retry_count += 1
+                    await asyncio.sleep(status_check_interval)
+                    continue
+                else:
+                    return ValidationResult(
+                        success=False,
+                        message=f"Failed to retrieve status checks after {status_check_retries + 1} attempts",
+                        details={"error": str(e), "stderr": e.stderr},
+                        actionable_items=["Check GitHub API access and repository permissions"],
+                    )
+
+        # This shouldn't be reached, but handle it gracefully
+        return ValidationResult(
+            success=False,
+            message="Status check validation failed unexpectedly",
+            details=details,
+            actionable_items=["Please try again or check logs for details"],
+        )
 
     except Exception as e:
-        return False, [f"Error validating status checks: {str(e)}"]
+        logger.error(f"Unexpected error during status check validation: {e}")
+        return ValidationResult(
+            success=False,
+            message=f"Status check validation error: {str(e)}",
+            details={"error": str(e), "error_type": type(e).__name__},
+            actionable_items=["Check logs for detailed error information"],
+        )
+
+
+async def _get_pr_head_sha(pr_number: int, owner: str, repo: str) -> str | None:
+    """Get the head commit SHA for a PR."""
+    try:
+        cmd = ["gh", "api", f"repos/{owner}/{repo}/pulls/{pr_number}", "--jq", ".head.sha"]
+
+        result = await run_command(cmd)
+        if result.returncode == 0:
+            return result.stdout.strip()
+        else:
+            logger.warning(f"Failed to get PR head SHA: {result.stderr}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"Error getting PR head SHA: {e}")
+        return None
+
+
+async def _fetch_status_checks(owner: str, repo: str, sha: str) -> dict[str, Any] | None:
+    """Fetch status checks for a specific commit."""
+    try:
+        # Get combined status (includes both status API and checks API results)
+        cmd = ["gh", "api", f"repos/{owner}/{repo}/commits/{sha}/status", "--paginate"]
+
+        result = await run_command(cmd)
+        if result.returncode == 0:
+            status_data = json.loads(result.stdout) if result.stdout.strip() else {}
+
+            # Also get check runs for more comprehensive coverage
+            check_cmd = [
+                "gh",
+                "api",
+                f"repos/{owner}/{repo}/commits/{sha}/check-runs",
+                "--paginate",
+            ]
+
+            check_result = await run_command(check_cmd)
+            if check_result.returncode == 0:
+                check_data = json.loads(check_result.stdout) if check_result.stdout.strip() else {}
+                if "check_runs" in check_data:
+                    status_data["check_runs"] = check_data["check_runs"]
+
+            return status_data
+        else:
+            logger.warning(f"Failed to fetch status checks: {result.stderr}")
+            return None
+
+    except Exception as e:
+        logger.warning(f"Error fetching status checks: {e}")
+        return None
+
+
+async def _get_required_status_checks_from_protection(
+    owner: str, repo: str, branch: str
+) -> list[str]:
+    """Get required status checks from branch protection rules."""
+    try:
+        cmd = [
+            "gh",
+            "api",
+            f"repos/{owner}/{repo}/branches/{branch}/protection",
+            "--jq",
+            ".required_status_checks.contexts // []",
+        ]
+
+        result = await run_command(cmd)
+        if result.returncode == 0 and result.stdout.strip():
+            required_checks = json.loads(result.stdout)
+            return required_checks if isinstance(required_checks, list) else []
+        else:
+            # Branch might not have protection rules, which is fine
+            logger.debug(f"No branch protection or required checks found for {branch}")
+            return []
+
+    except Exception as e:
+        logger.debug(f"Error getting required status checks from protection: {e}")
+        return []
 
 
 async def validate_branch_protection(
@@ -329,8 +689,6 @@ async def _get_pr_info(pr_number: int, owner: str, repo: str) -> dict[str, Any]:
         result = await run_command(cmd)
 
         if result.returncode == 0:
-            import json
-
             return dict(json.loads(result.stdout))
         else:
             logger.error(f"Failed to get PR info: {result.stderr}")

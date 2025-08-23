@@ -352,6 +352,32 @@ class GitHubConfig(BaseModel):
         default_factory=list, description="List of required reviewer usernames"
     )
 
+    # Status check configuration
+    status_check_retries: int = Field(default=3, description="Retries for status check failures")
+    status_check_interval: int = Field(
+        default=30, description="Interval between status check polls (seconds)"
+    )
+
+    @field_validator("status_check_retries")
+    @classmethod
+    def validate_status_check_retries(cls, v: int) -> int:
+        """Validate status check retries is reasonable."""
+        if v < 0:
+            raise ValueError("Status check retries cannot be negative") from None
+        if v > 10:
+            raise ValueError("Status check retries cannot exceed 10")
+        return v
+
+    @field_validator("status_check_interval")
+    @classmethod
+    def validate_status_check_interval(cls, v: int) -> int:
+        """Validate status check interval is reasonable."""
+        if v < 5:
+            raise ValueError("Status check interval must be at least 5 seconds") from None
+        if v > 300:
+            raise ValueError("Status check interval cannot exceed 5 minutes")
+        return v
+
 
 class LinearConfig(BaseModel):
     """Linear configuration settings."""
@@ -538,6 +564,13 @@ class WorkflowsConfig(BaseModel):
         description="Commit message template for implementations",
     )
 
+    # Status check validation configuration
+    wait_for_checks: bool = Field(default=True, description="Wait for pending status checks")
+    check_timeout: int = Field(default=600, description="Max wait time for status checks (seconds)")
+    required_status_checks: list[str] = Field(
+        default_factory=list, description="Override required status checks"
+    )
+
     @field_validator("review_check_interval")
     @classmethod
     def validate_review_check_interval(cls, v: int) -> int:
@@ -601,6 +634,16 @@ class WorkflowsConfig(BaseModel):
             raise ValueError(
                 f"Invalid commit convention: {v}. Must be one of {valid_conventions}"
             ) from None
+        return v
+
+    @field_validator("check_timeout")
+    @classmethod
+    def validate_check_timeout(cls, v: int) -> int:
+        """Validate check timeout is reasonable."""
+        if v < 0:
+            raise ValueError("Check timeout cannot be negative") from None
+        if v > 7200:  # 2 hours max
+            raise ValueError("Check timeout cannot exceed 2 hours")
         return v
 
 
