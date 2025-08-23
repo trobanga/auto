@@ -513,6 +513,99 @@ tests/
 - **Performance** - Efficient GitHub API usage and state management
 - **User Experience** - Clear feedback and progress indication
 
+## Status Check Validation Implementation (Issue #13) ✅ **COMPLETED**
+
+### **Enhanced CI/CD Status Check Validation**
+
+The `_validate_status_checks()` function has been fully implemented with comprehensive GitHub API integration and advanced timeout handling capabilities.
+
+#### **Implementation Details**
+
+**Function Signature:**
+```python
+async def _validate_status_checks(pr_number: int, repository: GitHubRepository, config: Config) -> ValidationResult
+```
+
+**Key Features:**
+1. **Dual API Support**: Integrates both GitHub Status API and Check Runs API for complete CI/CD coverage
+2. **Branch Protection Integration**: Automatically detects required status checks from branch protection rules
+3. **Intelligent Timeout Handling**: Configurable wait times for pending checks with retry logic
+4. **Comprehensive Error Handling**: Network resilience with detailed error reporting
+5. **Structured Results**: Returns `ValidationResult` with actionable guidance for failed validations
+
+#### **Configuration Options**
+
+**WorkflowsConfig Extensions:**
+```yaml
+workflows:
+  wait_for_checks: true          # Wait for pending status checks
+  check_timeout: 600             # Max wait time for checks (seconds)
+  required_status_checks: []     # Override required status checks
+```
+
+**GitHubConfig Extensions:**
+```yaml
+github:
+  status_check_retries: 3        # Retries for transient failures
+  status_check_interval: 30      # Seconds between status check polls
+```
+
+#### **API Integration Patterns**
+
+**Status Check Retrieval:**
+```bash
+# Combined status API (traditional)
+gh api repos/{owner}/{repo}/commits/{sha}/status --paginate
+
+# Check runs API (newer GitHub Checks)  
+gh api repos/{owner}/{repo}/commits/{sha}/check-runs --paginate
+
+# Branch protection rules
+gh api repos/{owner}/{repo}/branches/{branch}/protection --jq ".required_status_checks.contexts // []"
+```
+
+**Head Commit SHA Resolution:**
+```bash
+gh api repos/{owner}/{repo}/pulls/{pr_number} --jq ".head.sha"
+```
+
+#### **Validation Logic Flow**
+
+1. **PR Information Retrieval**: Get PR details and extract head commit SHA
+2. **Required Checks Discovery**: Combine config overrides with branch protection rules
+3. **Status Monitoring Loop**: Poll status checks with configurable intervals
+4. **State Classification**: Categorize checks as passing, failing, or pending
+5. **Timeout Management**: Handle pending checks with configurable timeout behavior
+6. **Result Generation**: Return structured validation results with actionable guidance
+
+#### **Error Handling & Resilience**
+
+- **Network Failures**: Automatic retries with exponential backoff
+- **API Rate Limits**: Built-in GitHub CLI rate limit handling
+- **Missing Data**: Graceful handling of missing PR or status information
+- **Transient Errors**: Configurable retry logic for temporary GitHub API issues
+
+#### **Test Coverage**
+
+**Comprehensive Test Suite** (`tests/test_merge_status_validation.py`):
+- **All Status Scenarios**: Passing, failing, pending, missing, and timeout cases
+- **API Integration**: Mock GitHub API responses for various check states  
+- **Configuration Testing**: Validation of all new configuration options
+- **Error Handling**: Network failures, API errors, and edge case coverage
+- **Performance**: Timeout behavior and retry logic validation
+
+#### **Integration Points**
+
+**Existing Merge Validation Pipeline:**
+- Integrates seamlessly with `validate_merge_eligibility()` function
+- Respects `force` parameter for emergency merges
+- Follows established error handling patterns in merge validation workflow
+
+**Configuration System:**
+- Extends existing hierarchical config with backward compatibility
+- Supports environment variable overrides following established patterns
+- Validates configuration values with comprehensive field validation
+
 ## Phase 5 Implementation Strategy
 
 ### **Ready Infrastructure Analysis**
@@ -558,11 +651,13 @@ Complete the partially implemented validation functions:
    - Respect configuration for required reviewer count
    - Integration with existing review integration patterns
 
-2. **`_validate_status_checks(pr_number, repository):`**
-   - Verify CI/CD pipeline status using GitHub status API
-   - Check required status checks from branch protection
-   - Handle pending/failed checks with appropriate messaging
-   - Configurable timeout for pending checks
+2. **`_validate_status_checks(pr_number, repository, config):`** ✅ **IMPLEMENTED**
+   - **Complete GitHub Status API integration** via `gh api repos/{owner}/{repo}/commits/{sha}/status`
+   - **Branch protection rules integration** with automatic required check detection
+   - **Pending check timeout handling** with configurable wait times and retry logic
+   - **Both Status API and Check Runs API support** for comprehensive CI/CD coverage
+   - **Detailed validation results** with actionable error messages and remediation guidance
+   - **Network resilience** with configurable retries and failure handling
 
 3. **`_validate_branch_protection(pr_number, repository):`**
    - Respect GitHub branch protection rules
