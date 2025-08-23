@@ -1,7 +1,8 @@
 """Integration tests for CLI process command."""
 
-from click.testing import CliRunner
 from unittest.mock import Mock, patch
+
+from click.testing import CliRunner
 
 from auto.cli import cli
 from auto.models import (
@@ -73,7 +74,7 @@ class TestProcessCommand:
 
         mock_validate_prereqs.assert_called_once_with("#123")
         mock_process_workflow.assert_called_once_with(
-            issue_id="#123", 
+            issue_id="#123",
             base_branch=None,
             enable_ai=True,
             enable_pr=True,
@@ -82,7 +83,7 @@ class TestProcessCommand:
             prompt_template=None,
             prompt_append=None,
             show_prompt=False,
-            resume=False
+            resume=False,
         )
 
     @patch("auto.workflows.validate_process_prerequisites")
@@ -106,7 +107,7 @@ class TestProcessCommand:
 
         assert result.exit_code == 0
         mock_process_workflow.assert_called_once_with(
-            issue_id="#123", 
+            issue_id="#123",
             base_branch="develop",
             enable_ai=True,
             enable_pr=True,
@@ -115,7 +116,7 @@ class TestProcessCommand:
             prompt_template=None,
             prompt_append=None,
             show_prompt=False,
-            resume=False
+            resume=False,
         )
 
     @patch("auto.workflows.validate_process_prerequisites")

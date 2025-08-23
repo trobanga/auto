@@ -2,19 +2,20 @@
 
 import asyncio
 import json
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from auto.integrations.ai import (
-    ClaudeIntegration,
     AICommandResult,
     AIIntegrationError,
+    ClaudeIntegration,
     execute_ai_command,
     format_implementation_prompt,
     parse_ai_response,
-    validate_ai_prerequisites
+    validate_ai_prerequisites,
 )
-from auto.models import AIConfig, Issue, IssueProvider, IssueStatus, AIResponse
+from auto.models import AIConfig, AIResponse, Issue, IssueProvider, IssueStatus
 
 
 @pytest.fixture
@@ -29,7 +30,7 @@ def ai_config():
         review_prompt="Review this PR for issues",
         update_prompt="Address these comments: {comments}",
         timeout=30,
-        enable_activity_monitoring=False  # Disable monitoring for simpler tests
+        enable_activity_monitoring=False,  # Disable monitoring for simpler tests
     )
 
 
@@ -43,7 +44,7 @@ def sample_issue():
         description="Implement a dark mode toggle for the application",
         status=IssueStatus.OPEN,
         labels=["feature", "ui"],
-        assignee="developer"
+        assignee="developer",
     )
 
 
@@ -65,19 +66,18 @@ class TestClaudeIntegration:
     @pytest.mark.anyio
     async def test_execute_implementation_success(self, claude_integration, sample_issue):
         """Test successful AI implementation execution."""
-        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
-             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute, \
-             patch.object(claude_integration, '_parse_ai_response') as mock_parse:
-            
+        with (
+            patch.object(claude_integration, "_validate_prerequisites", new_callable=AsyncMock),
+            patch.object(
+                claude_integration, "_execute_ai_command", new_callable=AsyncMock
+            ) as mock_execute,
+            patch.object(claude_integration, "_parse_ai_response") as mock_parse,
+        ):
             # Mock command result
             mock_execute.return_value = AICommandResult(
-                success=True,
-                output="Implementation complete",
-                error="",
-                exit_code=0,
-                duration=10.0
+                success=True, output="Implementation complete", error="", exit_code=0, duration=10.0
             )
-            
+
             # Mock parsed response
             mock_response = AIResponse(
                 success=True,
@@ -85,81 +85,84 @@ class TestClaudeIntegration:
                 content="Implementation complete",
                 file_changes=[{"action": "created", "path": "src/DarkMode.tsx"}],
                 commands=["npm test"],
-                metadata={}
+                metadata={},
             )
             mock_parse.return_value = mock_response
-            
-            result = await claude_integration.execute_implementation(
-                sample_issue, 
-                "/tmp/worktree"
-            )
-            
+
+            result = await claude_integration.execute_implementation(sample_issue, "/tmp/worktree")
+
             assert result == mock_response
             mock_execute.assert_called_once()
             mock_parse.assert_called_once_with("Implementation complete", "implementation")
 
     @pytest.mark.anyio
-    async def test_execute_implementation_with_custom_prompt(self, claude_integration, sample_issue):
+    async def test_execute_implementation_with_custom_prompt(
+        self, claude_integration, sample_issue
+    ):
         """Test AI implementation with custom prompt."""
         custom_prompt = "Focus on performance and testing"
-        
-        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
-             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute, \
-             patch.object(claude_integration, '_parse_ai_response') as mock_parse, \
-             patch.object(claude_integration, '_format_implementation_prompt') as mock_format:
-            
+
+        with (
+            patch.object(claude_integration, "_validate_prerequisites", new_callable=AsyncMock),
+            patch.object(
+                claude_integration, "_execute_ai_command", new_callable=AsyncMock
+            ) as mock_execute,
+            patch.object(claude_integration, "_parse_ai_response") as mock_parse,
+            patch.object(claude_integration, "_format_implementation_prompt") as mock_format,
+        ):
             mock_format.return_value = f"Issue #{sample_issue.id}: {sample_issue.title}\n\n{sample_issue.description}\n\n{custom_prompt}"
             mock_execute.return_value = AICommandResult(
                 success=True, output="Custom implementation", error="", exit_code=0, duration=5.0
             )
             mock_parse.return_value = AIResponse(
-                success=True, response_type="implementation", content="Custom implementation",
-                file_changes=[], commands=[], metadata={}
+                success=True,
+                response_type="implementation",
+                content="Custom implementation",
+                file_changes=[],
+                commands=[],
+                metadata={},
             )
-            
+
             await claude_integration.execute_implementation(
                 sample_issue, "/tmp/worktree", custom_prompt
             )
-            
+
             mock_format.assert_called_once_with(sample_issue, "/tmp/worktree", custom_prompt)
 
     @pytest.mark.anyio
     async def test_execute_implementation_failure(self, claude_integration, sample_issue):
         """Test AI implementation failure handling."""
-        with patch.object(claude_integration, '_validate_prerequisites', new_callable=AsyncMock), \
-             patch.object(claude_integration, '_execute_ai_command', new_callable=AsyncMock) as mock_execute:
-            
+        with (
+            patch.object(claude_integration, "_validate_prerequisites", new_callable=AsyncMock),
+            patch.object(
+                claude_integration, "_execute_ai_command", new_callable=AsyncMock
+            ) as mock_execute,
+        ):
             mock_execute.return_value = AICommandResult(
-                success=False,
-                output="",
-                error="Command failed",
-                exit_code=1,
-                duration=2.0
+                success=False, output="", error="Command failed", exit_code=1, duration=2.0
             )
-            
+
             with pytest.raises(AIIntegrationError) as excinfo:
                 await claude_integration.execute_implementation(sample_issue, "/tmp/worktree")
-            
+
             assert "AI implementation failed" in str(excinfo.value)
             assert excinfo.value.exit_code == 1
 
     @pytest.mark.anyio
     async def test_execute_ai_command_success(self, claude_integration):
         """Test successful AI command execution."""
-        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+        with patch("asyncio.create_subprocess_exec") as mock_create_proc:
             # Mock subprocess
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.pid = 12345  # Set as actual integer, not mock
             mock_process.communicate.return_value = (b"Success output", b"")
             mock_create_proc.return_value = mock_process
-            
+
             result = await claude_integration._execute_ai_command(
-                "Test prompt",
-                "coder",
-                "/tmp/workdir"
+                "Test prompt", "coder", "/tmp/workdir"
             )
-            
+
             assert result.success is True
             assert result.output == "Success output"
             assert result.error == ""
@@ -173,100 +176,93 @@ class TestClaudeIntegration:
         ai_config.stale_timeout = 1  # 1 second timeout
         ai_config.enable_activity_monitoring = True
         integration = ClaudeIntegration(ai_config)
-        
-        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+
+        with patch("asyncio.create_subprocess_exec") as mock_create_proc:
             # Create a mock process that produces initial output then hangs
             mock_process = AsyncMock()
             mock_process.returncode = None  # Process is still running
             mock_process.pid = 12345
-            
+
             # Mock stdout that produces some initial output then stops
             initial_output = b"Starting AI processing...\n"
             mock_process.stdout = AsyncMock()
-            
+
             # Configure readline to return initial output once, then hang
             mock_readline_calls = [
                 initial_output,  # First call returns initial output
                 # Subsequent calls will hang (timeout) - this simulates stale process
             ]
             mock_process.stdout.readline.side_effect = mock_readline_calls
-            
+
             # Mock stderr (no error output)
             mock_process.stderr = AsyncMock()
             mock_process.stderr.readline.side_effect = [asyncio.TimeoutError] * 10  # Always timeout
-            
+
             # Mock the process.wait() method
             async def mock_wait():
                 # Simulate process being killed
                 mock_process.returncode = -1
                 return -1
+
             mock_process.wait = mock_wait
-            
+
             # Mock process.kill() method
             mock_process.kill = MagicMock()
-            
+
             # Mock read methods for final cleanup
             mock_process.stdout.read.return_value = b""
             mock_process.stderr.read.return_value = b""
-            
+
             mock_create_proc.return_value = mock_process
-            
+
             # Patch time.time to control timeout behavior
-            with patch('time.time') as mock_time:
+            with patch("time.time") as mock_time:
                 start_time = 1000.0
                 current_time = start_time
-                
+
                 def mock_time_func():
                     nonlocal current_time
                     # Advance time slightly each call
                     current_time += 0.1
                     return current_time
-                
+
                 mock_time.side_effect = mock_time_func
-                
+
                 # Execute the AI command
                 result = await integration._execute_ai_command(
-                    "Test prompt that will timeout",
-                    "coder",
-                    "/tmp/workdir"
+                    "Test prompt that will timeout", "coder", "/tmp/workdir"
                 )
-                
+
                 # Verify timeout behavior
                 assert result.success is False
                 assert "stalled" in result.error.lower()
                 assert "no output for 1 seconds" in result.error
                 assert result.exit_code == -1
                 assert result.duration > 0
-                
+
                 # Verify the process was killed
                 mock_process.kill.assert_called_once()
-                
+
                 # Verify initial output was captured
                 assert "Starting AI processing" in result.output
 
     @pytest.mark.anyio
     async def test_execute_ai_command_exception(self, claude_integration):
         """Test AI command exception handling."""
-        with patch('asyncio.create_subprocess_exec', side_effect=Exception("Process error")):
-            
-            result = await claude_integration._execute_ai_command(
-                "Test prompt",
-                "coder"
-            )
-            
+        with patch("asyncio.create_subprocess_exec", side_effect=Exception("Process error")):
+            result = await claude_integration._execute_ai_command("Test prompt", "coder")
+
             assert result.success is False
             assert "Process error" in result.error
             assert result.exit_code == -1
 
     def test_format_implementation_prompt_default(self, claude_integration, sample_issue):
         """Test default implementation prompt formatting."""
-        with patch.object(claude_integration, '_get_repository_context', return_value="repo context"):
-            
-            prompt = claude_integration._format_implementation_prompt(
-                sample_issue, 
-                "/tmp/worktree"
-            )
-            
+        with patch.object(
+            claude_integration, "_get_repository_context", return_value="repo context"
+        ):
+            prompt = claude_integration._format_implementation_prompt(sample_issue, "/tmp/worktree")
+
             # The template "Implement this issue: {description}" only substitutes description
             # so the context won't be included unless the template references it
             assert sample_issue.description in prompt  # from template
@@ -277,28 +273,28 @@ class TestClaudeIntegration:
     def test_format_implementation_prompt_custom(self, claude_integration, sample_issue):
         """Test custom implementation prompt formatting."""
         custom_prompt = "Focus on performance"
-        
+
         prompt = claude_integration._format_implementation_prompt(
-            sample_issue,
-            "/tmp/worktree", 
-            custom_prompt
+            sample_issue, "/tmp/worktree", custom_prompt
         )
-        
+
         assert sample_issue.id in prompt
         assert sample_issue.title in prompt
         assert custom_prompt in prompt
 
     def test_parse_ai_response_json(self, claude_integration):
         """Test parsing structured JSON AI response."""
-        json_output = json.dumps({
-            "content": "Implementation complete",
-            "file_changes": [{"action": "created", "path": "src/test.py"}],
-            "commands": ["pytest"],
-            "metadata": {"duration": "5min"}
-        })
-        
+        json_output = json.dumps(
+            {
+                "content": "Implementation complete",
+                "file_changes": [{"action": "created", "path": "src/test.py"}],
+                "commands": ["pytest"],
+                "metadata": {"duration": "5min"},
+            }
+        )
+
         response = claude_integration._parse_ai_response(json_output, "implementation")
-        
+
         assert response.success is True
         assert response.response_type == "implementation"
         assert response.content == "Implementation complete"
@@ -311,16 +307,16 @@ class TestClaudeIntegration:
         """Test parsing freeform AI response."""
         freeform_output = """
         Implementation complete.
-        
+
         Modified: src/components/Button.tsx
         Created: src/hooks/useDarkMode.ts
-        
+
         Run: npm test
         Execute: npm run build
         """
-        
+
         response = claude_integration._parse_ai_response(freeform_output, "implementation")
-        
+
         assert response.success is True
         assert response.response_type == "implementation"
         assert "Implementation complete" in response.content
@@ -333,9 +329,9 @@ class TestClaudeIntegration:
     def test_parse_ai_response_malformed(self, claude_integration):
         """Test parsing malformed AI response."""
         malformed_output = '{"invalid": json'
-        
+
         response = claude_integration._parse_ai_response(malformed_output, "implementation")
-        
+
         # The parsing should handle malformed JSON gracefully and still return structured response
         assert response.response_type == "implementation"
         # Content should be a summary, not the original malformed output
@@ -351,9 +347,9 @@ class TestClaudeIntegration:
         - src/utils.py (modified)
         - src/config.py (created)
         """
-        
+
         changes = claude_integration._extract_file_changes(text)
-        
+
         assert len(changes) == 4
         assert {"action": "modified", "path": "src/app.py"} in changes
         assert {"action": "created", "path": "tests/test_new.py"} in changes
@@ -368,13 +364,13 @@ class TestClaudeIntegration:
         npm test
         # This is a comment
         ```
-        
+
         Run: pytest -v
         Execute: black --check .
         """
-        
+
         commands = claude_integration._extract_commands(text)
-        
+
         assert "npm install" in commands
         assert "npm test" in commands
         assert "pytest -v" in commands
@@ -387,13 +383,13 @@ class TestClaudeIntegration:
         (tmp_path / "package.json").write_text('{"name": "test"}')
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "app.py").write_text("# Python file")
-        
-        with patch('subprocess.run') as mock_run:
+
+        with patch("subprocess.run") as mock_run:
             mock_run.return_value.returncode = 0
             mock_run.return_value.stdout = "./src/app.py\n"
-            
+
             context = claude_integration._get_repository_context(str(tmp_path))
-            
+
             assert "package.json" in context
             assert '"name": "test"' in context
             assert "Key files:" in context
@@ -401,52 +397,46 @@ class TestClaudeIntegration:
     @pytest.mark.anyio
     async def test_validate_prerequisites_success(self, claude_integration):
         """Test successful prerequisites validation."""
-        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+        with patch("asyncio.create_subprocess_exec") as mock_create_proc:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_create_proc.return_value = mock_process
-            
+
             # Should not raise
             await claude_integration._validate_prerequisites()
 
     @pytest.mark.anyio
     async def test_validate_prerequisites_claude_not_found(self, claude_integration):
         """Test prerequisites validation when Claude CLI not found."""
-        with patch('asyncio.create_subprocess_exec', side_effect=FileNotFoundError):
-            
+        with patch("asyncio.create_subprocess_exec", side_effect=FileNotFoundError):
             with pytest.raises(AIIntegrationError) as excinfo:
                 await claude_integration._validate_prerequisites()
-            
+
             assert "Claude CLI not found" in str(excinfo.value)
 
     @pytest.mark.anyio
     async def test_validate_prerequisites_claude_fails(self, claude_integration):
         """Test prerequisites validation when Claude CLI fails."""
-        with patch('asyncio.create_subprocess_exec') as mock_create_proc:
+        with patch("asyncio.create_subprocess_exec") as mock_create_proc:
             mock_process = AsyncMock()
             mock_process.returncode = 1
             mock_create_proc.return_value = mock_process
-            
+
             with pytest.raises(AIIntegrationError) as excinfo:
                 await claude_integration._validate_prerequisites()
-            
+
             assert "not working properly" in str(excinfo.value)
 
     def test_validate_prerequisites_no_agent(self):
-        """Test prerequisites validation when no agent configured."""
-        config_no_agent = AIConfig(
-            implementation_agent="",  # Empty agent
-            review_agent="reviewer",
-            update_agent="updater"
-        )
-        integration = ClaudeIntegration(config_no_agent)
-        
-        async def test():
-            with pytest.raises(AIIntegrationError) as excinfo:
-                await integration._validate_prerequisites()
-            assert "Implementation agent not configured" in str(excinfo.value)
-        
-        asyncio.run(test())
+        """Test prerequisites validation when agent name is invalid."""
+        # Test that AIConfig validates agent names at creation
+        with pytest.raises(ValueError) as excinfo:
+            AIConfig(
+                implementation_agent="",  # Empty agent should be rejected
+                review_agent="reviewer",
+                update_agent="updater",
+            )
+        assert "Agent name cannot be empty" in str(excinfo.value)
 
 
 class TestConvenienceFunctions:
@@ -455,19 +445,17 @@ class TestConvenienceFunctions:
     @pytest.mark.anyio
     async def test_execute_ai_command(self, ai_config):
         """Test execute_ai_command convenience function."""
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+        with patch("auto.integrations.ai.ClaudeIntegration") as mock_integration_class:
             mock_integration = MagicMock()
-            mock_integration._execute_ai_command = AsyncMock(return_value=AICommandResult(
-                success=True, output="test", error="", exit_code=0, duration=1.0
-            ))
-            mock_integration_class.return_value = mock_integration
-            
-            result = await execute_ai_command(
-                ai_config, 
-                "test prompt", 
-                "coder"
+            mock_integration._execute_ai_command = AsyncMock(
+                return_value=AICommandResult(
+                    success=True, output="test", error="", exit_code=0, duration=1.0
+                )
             )
-            
+            mock_integration_class.return_value = mock_integration
+
+            result = await execute_ai_command(ai_config, "test prompt", "coder")
+
             assert result.success is True
             mock_integration._execute_ai_command.assert_called_once_with(
                 "test prompt", "coder", None
@@ -475,22 +463,20 @@ class TestConvenienceFunctions:
 
     def test_format_implementation_prompt(self, sample_issue):
         """Test format_implementation_prompt convenience function."""
-        with patch('auto.config.Config') as mock_config_class, \
-             patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
-            
+        with (
+            patch("auto.config.Config") as mock_config_class,
+            patch("auto.integrations.ai.ClaudeIntegration") as mock_integration_class,
+        ):
             mock_config = MagicMock()
             mock_config.ai = AIConfig()
             mock_config_class.return_value = mock_config
-            
+
             mock_integration = MagicMock()
             mock_integration._format_implementation_prompt.return_value = "formatted prompt"
             mock_integration_class.return_value = mock_integration
-            
-            result = format_implementation_prompt(
-                sample_issue,
-                "/tmp/worktree"
-            )
-            
+
+            result = format_implementation_prompt(sample_issue, "/tmp/worktree")
+
             assert result == "formatted prompt"
             mock_integration._format_implementation_prompt.assert_called_once_with(
                 sample_issue, "/tmp/worktree", None
@@ -498,23 +484,28 @@ class TestConvenienceFunctions:
 
     def test_parse_ai_response(self):
         """Test parse_ai_response convenience function."""
-        with patch('auto.config.Config') as mock_config_class, \
-             patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
-            
+        with (
+            patch("auto.config.Config") as mock_config_class,
+            patch("auto.integrations.ai.ClaudeIntegration") as mock_integration_class,
+        ):
             mock_config = MagicMock()
             mock_config.ai = AIConfig()
             mock_config_class.return_value = mock_config
-            
+
             mock_integration = MagicMock()
             mock_response = AIResponse(
-                success=True, response_type="test", content="test",
-                file_changes=[], commands=[], metadata={}
+                success=True,
+                response_type="test",
+                content="test",
+                file_changes=[],
+                commands=[],
+                metadata={},
             )
             mock_integration._parse_ai_response.return_value = mock_response
             mock_integration_class.return_value = mock_integration
-            
+
             result = parse_ai_response("test output")
-            
+
             assert result == mock_response
             mock_integration._parse_ai_response.assert_called_once_with(
                 "test output", "implementation"
@@ -523,13 +514,13 @@ class TestConvenienceFunctions:
     @pytest.mark.anyio
     async def test_validate_ai_prerequisites(self, ai_config):
         """Test validate_ai_prerequisites convenience function."""
-        with patch('auto.integrations.ai.ClaudeIntegration') as mock_integration_class:
+        with patch("auto.integrations.ai.ClaudeIntegration") as mock_integration_class:
             mock_integration = MagicMock()
             mock_integration._validate_prerequisites = AsyncMock()
             mock_integration_class.return_value = mock_integration
-            
+
             await validate_ai_prerequisites(ai_config)
-            
+
             mock_integration._validate_prerequisites.assert_called_once()
 
 
