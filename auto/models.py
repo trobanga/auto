@@ -347,6 +347,10 @@ class GitHubConfig(BaseModel):
     token: str | None = Field(default=None, description="GitHub token (optional with gh CLI)")
     base_branch_detection: bool = Field(default=True, description="Auto-detect main/master branch")
     issue_fetch_timeout: int = Field(default=30, description="Timeout for issue fetching (seconds)")
+    required_approvals: int = Field(default=1, description="Required number of approvals for merge")
+    required_reviewers: list[str] = Field(
+        default_factory=list, description="List of required reviewer usernames"
+    )
 
 
 class LinearConfig(BaseModel):
@@ -613,6 +617,19 @@ class Config(BaseModel):
     )
 
     model_config = {"extra": "allow"}  # Allow additional fields for extensibility
+
+
+class ValidationResult(BaseModel):
+    """Result of PR review validation for merge automation."""
+
+    success: bool = Field(description="Whether validation passed")
+    message: str = Field(description="Summary message of validation result")
+    details: dict[str, Any] = Field(
+        default_factory=dict, description="Detailed validation information"
+    )
+    actionable_items: list[str] = Field(
+        default_factory=list, description="List of items that need attention"
+    )
 
 
 class IssueIdentifier(BaseModel):
