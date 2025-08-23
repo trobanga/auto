@@ -621,9 +621,11 @@ This PR implements the requested functionality with {len(file_changes)} file cha
         Returns:
             AICommandResult with execution details
         """
+        import os
         import time
 
         start_time = time.time()
+        original_cwd = None
 
         try:
             # Build command using flexible command builder
@@ -632,10 +634,18 @@ This PR implements the requested functionality with {len(file_changes)} file cha
             self.logger.info(f"Executing AI command: {' '.join(cmd[:3])}... (prompt truncated)")
             self.logger.debug(f"Full command: {' '.join(cmd)}")
 
-            # Execute command
+            # Handle working directory change for Claude CLI
+            if working_directory:
+                original_cwd = os.getcwd()
+                self.logger.debug(
+                    f"Changing working directory from {original_cwd} to {working_directory}"
+                )
+                os.chdir(working_directory)
+                self.logger.debug(f"Now in working directory: {os.getcwd()}")
+
+            # Execute command (without cwd since we manually changed directories)
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                cwd=working_directory,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 limit=1024 * 1024,  # 1MB limit for output
@@ -643,7 +653,7 @@ This PR implements the requested functionality with {len(file_changes)} file cha
 
             # Activity monitoring with stale detection
             if self.config.enable_activity_monitoring:
-                return await self._monitor_ai_command_with_activity(
+                result = await self._monitor_ai_command_with_activity(
                     process, start_time, agent, prompt
                 )
             else:
@@ -655,7 +665,7 @@ This PR implements the requested functionality with {len(file_changes)} file cha
                 error = stderr.decode("utf-8", errors="replace")
                 success = process.returncode == 0
 
-                return AICommandResult(
+                result = AICommandResult(
                     success=success,
                     output=output,
                     error=error,
@@ -663,12 +673,20 @@ This PR implements the requested functionality with {len(file_changes)} file cha
                     duration=duration,
                 )
 
+            return result
+
         except Exception as e:
             duration = time.time() - start_time
             self.logger.error(f"Failed to execute AI command: {e}")
             return AICommandResult(
                 success=False, output="", error=str(e), exit_code=-1, duration=duration
             )
+
+        finally:
+            # Always restore original working directory
+            if original_cwd is not None:
+                self.logger.debug(f"Restoring working directory to {original_cwd}")
+                os.chdir(original_cwd)
 
     async def _monitor_ai_command_with_activity(
         self, process: asyncio.subprocess.Process, start_time: float, agent: str, prompt: str
