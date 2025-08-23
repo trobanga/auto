@@ -410,7 +410,7 @@ class TestFetchStatusChecks:
             cwd=None,
         )
 
-        with patch("auto.workflows.merge_validation.run_command") as mock_run_command:
+        with patch("auto.workflows.merge_validation.run_command_async") as mock_run_command:
             mock_run_command.side_effect = [mock_status_result, mock_check_result]
 
             result = await _fetch_status_checks("owner", "repo", "abc123")
@@ -424,7 +424,7 @@ class TestFetchStatusChecks:
     @pytest.mark.asyncio
     async def test_status_fetch_failure(self):
         """Test status check fetch failure."""
-        with patch("auto.workflows.merge_validation.run_command") as mock_run_command:
+        with patch("auto.workflows.merge_validation.run_command_async") as mock_run_command:
             mock_run_command.side_effect = ShellError("API error", 1, "", "Rate limited")
 
             result = await _fetch_status_checks("owner", "repo", "abc123")
@@ -446,7 +446,7 @@ class TestGetRequiredStatusChecks:
             cwd=None,
         )
 
-        with patch("auto.workflows.merge_validation.run_command") as mock_run_command:
+        with patch("auto.workflows.merge_validation.run_command_async") as mock_run_command:
             mock_run_command.return_value = mock_result
 
             result = await _get_required_status_checks_from_protection("owner", "repo", "main")
@@ -464,7 +464,7 @@ class TestGetRequiredStatusChecks:
             cwd=None,
         )
 
-        with patch("auto.workflows.merge_validation.run_command") as mock_run_command:
+        with patch("auto.workflows.merge_validation.run_command_async") as mock_run_command:
             mock_run_command.return_value = mock_result
 
             result = await _get_required_status_checks_from_protection("owner", "repo", "main")
@@ -474,7 +474,7 @@ class TestGetRequiredStatusChecks:
     @pytest.mark.asyncio
     async def test_api_error(self):
         """Test API error handling."""
-        with patch("auto.workflows.merge_validation.run_command") as mock_run_command:
+        with patch("auto.workflows.merge_validation.run_command_async") as mock_run_command:
             mock_run_command.side_effect = Exception("Network error")
 
             result = await _get_required_status_checks_from_protection("owner", "repo", "main")

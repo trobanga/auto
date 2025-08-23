@@ -164,6 +164,54 @@ class TestReviewCycleOrchestration:
             with pytest.raises(ReviewWorkflowError, match="Review cycle execution failed"):
                 await execute_review_cycle(123, "owner/repo")
 
+    @pytest.mark.asyncio
+    async def test_execute_review_cycle_with_worktree_path(self, mock_config):
+        """Test execute_review_cycle properly passes worktree_path to AI operations."""
+        with (
+            patch("auto.workflows.review.get_config", return_value=mock_config),
+            patch("auto.workflows.review.trigger_ai_review"),
+            patch("auto.workflows.review.wait_for_human_review", return_value=True),
+            patch("auto.workflows.review.process_review_comments"),
+            patch(
+                "auto.workflows.review.check_cycle_completion",
+                return_value=ReviewCycleStatus.APPROVED,
+            ),
+            patch(
+                "auto.workflows.review._detect_worktree_for_pr", return_value=None
+            ),  # Don't auto-detect
+        ):
+            # Execute review cycle with worktree_path
+            worktree_path = "/test/worktree"
+            result = await execute_review_cycle(
+                pr_number=123, repository="owner/repo", worktree_path=worktree_path
+            )
+
+            # Verify state has worktree_path
+            assert result.worktree_path == worktree_path
+            assert result.status == ReviewCycleStatus.APPROVED
+
+    @pytest.mark.asyncio
+    async def test_execute_review_cycle_worktree_detection(self, mock_config):
+        """Test execute_review_cycle detects worktree when not provided."""
+        detected_path = "/detected/worktree"
+        with (
+            patch("auto.workflows.review.get_config", return_value=mock_config),
+            patch("auto.workflows.review.trigger_ai_review"),
+            patch("auto.workflows.review.wait_for_human_review", return_value=True),
+            patch("auto.workflows.review.process_review_comments"),
+            patch(
+                "auto.workflows.review.check_cycle_completion",
+                return_value=ReviewCycleStatus.APPROVED,
+            ),
+            patch("auto.workflows.review._detect_worktree_for_pr", return_value=detected_path),
+        ):
+            # Execute review cycle without worktree_path
+            result = await execute_review_cycle(pr_number=123, repository="owner/repo")
+
+            # Verify state has detected worktree_path
+            assert result.worktree_path == detected_path
+            assert result.status == ReviewCycleStatus.APPROVED
+
 
 class TestAIReviewExecution:
     """Test AI review execution functionality."""
@@ -210,7 +258,9 @@ class TestAIReviewExecution:
             await trigger_ai_review(state)
 
             # Verify AI review was called
-            mock_ai.execute_review.assert_called_once_with(pr_number=123, repository="owner/repo")
+            mock_ai.execute_review.assert_called_once_with(
+                pr_number=123, repository="owner/repo", worktree_path=None
+            )
 
             # Verify comments were posted
             mock_review.post_ai_review.assert_called_once()
@@ -516,7 +566,7 @@ class TestInitiateReviewCycle:
             result = await initiate_review_cycle(123, "owner/repo")
 
             # Verify execution was called
-            mock_execute.assert_called_once_with(123, "owner/repo")
+            mock_execute.assert_called_once_with(123, "owner/repo", worktree_path=None)
             assert result == mock_state
 
 
