@@ -139,7 +139,7 @@ class TestMergeAutomation:
                 success=True, message="Reviews OK", details={}, actionable_items=[]
             )
             mock_checks.return_value = ValidationResult(
-                success=True, message="Status checks passed", details={}, actionable_items=[]
+                success=True, message="Status checks OK", details={}, actionable_items=[]
             )
             mock_protection.return_value = (True, [])
 
@@ -168,7 +168,7 @@ class TestMergeAutomation:
                 success=True, message="Reviews OK", details={}, actionable_items=[]
             )
             mock_checks.return_value = ValidationResult(
-                success=True, message="Status checks passed", details={}, actionable_items=[]
+                success=True, message="Status checks OK", details={}, actionable_items=[]
             )
             mock_protection.return_value = (True, [])
 
@@ -197,7 +197,7 @@ class TestMergeAutomation:
                 success=True, message="Reviews OK", details={}, actionable_items=[]
             )
             mock_checks.return_value = ValidationResult(
-                success=True, message="Status checks passed", details={}, actionable_items=[]
+                success=True, message="Status checks OK", details={}, actionable_items=[]
             )
             mock_protection.return_value = (True, [])
 
@@ -324,7 +324,7 @@ class TestMergeHelperFunctions:
         mock_result.returncode = 0
         mock_result.stdout = '{"state": "open", "mergeable": true}'
 
-        with patch("auto.workflows.merge_validation.run_command", return_value=mock_result):
+        with patch("auto.workflows.merge_validation.run_command_async", return_value=mock_result):
             # Execute
             pr_info = await _get_pr_info(123, "owner", "repo")
 
@@ -339,7 +339,7 @@ class TestMergeHelperFunctions:
         mock_result.returncode = 1
         mock_result.stderr = "PR not found"
 
-        with patch("auto.workflows.merge_validation.run_command", return_value=mock_result):
+        with patch("auto.workflows.merge_validation.run_command_async", return_value=mock_result):
             # Execute
             pr_info = await _get_pr_info(123, "owner", "repo")
 
@@ -484,34 +484,34 @@ class TestMergeHelperFunctions:
     @pytest.mark.asyncio
     async def test_validate_status_checks_success(self):
         """Test status check validation success."""
+        from auto.models import Config, GitHubRepository
+
+        repository = GitHubRepository(owner="owner", name="repo")
+        config = Config()
+
+        pr_info = {
+            "headRefOid": "abc123",
+            "baseRefName": "main",
+        }
+
+        # Mock successful status checks
+        status_data = {
+            "statuses": [
+                {"context": "ci/build", "state": "success", "description": "Build passed"},
+                {"context": "ci/test", "state": "success", "description": "Tests passed"},
+            ]
+        }
+
         with (
-            patch("auto.workflows.merge_validation._get_pr_info") as mock_get_pr,
-            patch("auto.workflows.merge_validation._fetch_status_checks") as mock_fetch,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch("auto.workflows.merge_validation._get_pr_head_sha", return_value="abc123"),
+            patch("auto.workflows.merge_validation._fetch_status_checks", return_value=status_data),
             patch(
-                "auto.workflows.merge_validation._get_required_status_checks_from_protection"
-            ) as mock_required,
+                "auto.workflows.merge_validation._get_required_status_checks_from_protection",
+                return_value=[],
+            ),
         ):
-            # Mock PR info
-            mock_get_pr.return_value = {
-                "headRefOid": "abc123",
-                "baseRefName": "main",
-            }
-
-            # Mock successful status checks
-            mock_fetch.return_value = {
-                "statuses": [
-                    {"context": "ci/build", "state": "success", "description": "Build passed"},
-                    {"context": "ci/test", "state": "success", "description": "Tests passed"},
-                ]
-            }
-
-            mock_required.return_value = []
-
-            # Execute - need to create mock repository and config
-            from auto.models import Config, GitHubRepository
-
-            repository = GitHubRepository(owner="owner", name="repo")
-            config = Config()
+            # Execute
             result = await _validate_status_checks(123, repository, config)
 
             # Assert
@@ -521,84 +521,78 @@ class TestMergeHelperFunctions:
     @pytest.mark.asyncio
     async def test_validate_status_checks_failures(self):
         """Test status check validation with failures."""
+        from auto.models import Config, GitHubRepository
+
+        repository = GitHubRepository(owner="owner", name="repo")
+        config = Config()
+
+        pr_info = {
+            "headRefOid": "abc123",
+            "baseRefName": "main",
+        }
+
+        # Mock failing status checks
+        status_data = {
+            "statuses": [
+                {"context": "ci/build", "state": "success", "description": "Build passed"},
+                {"context": "ci/test", "state": "failure", "description": "Tests failed"},
+                {"context": "ci/lint", "state": "error", "description": "Lint error"},
+            ]
+        }
+
         with (
-            patch("auto.workflows.merge_validation._get_pr_info") as mock_get_pr,
-            patch("auto.workflows.merge_validation._fetch_status_checks") as mock_fetch,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch("auto.workflows.merge_validation._get_pr_head_sha", return_value="abc123"),
+            patch("auto.workflows.merge_validation._fetch_status_checks", return_value=status_data),
             patch(
-                "auto.workflows.merge_validation._get_required_status_checks_from_protection"
-            ) as mock_required,
+                "auto.workflows.merge_validation._get_required_status_checks_from_protection",
+                return_value=[],
+            ),
         ):
-            # Mock PR info
-            mock_get_pr.return_value = {
-                "headRefOid": "abc123",
-                "baseRefName": "main",
-            }
-
-            # Mock failing status checks
-            mock_fetch.return_value = {
-                "statuses": [
-                    {"context": "ci/build", "state": "success", "description": "Build passed"},
-                    {"context": "ci/test", "state": "failure", "description": "Tests failed"},
-                    {"context": "ci/lint", "state": "error", "description": "Lint error"},
-                ]
-            }
-
-            mock_required.return_value = []
-
-            # Execute - need to create mock repository and config
-            from auto.models import Config, GitHubRepository
-
-            repository = GitHubRepository(owner="owner", name="repo")
-            config = Config()
+            # Execute
             result = await _validate_status_checks(123, repository, config)
 
             # Assert
             assert result.success is False
-            assert "status check" in result.message.lower()
+            assert any("ci/test" in item or "ci/lint" in item for item in result.actionable_items)
 
     @pytest.mark.asyncio
     async def test_validate_status_checks_pending(self):
         """Test status check validation with pending checks."""
+        from auto.models import Config, GitHubRepository
+
+        repository = GitHubRepository(owner="owner", name="repo")
+        config = Config()
+        config.workflows.wait_for_checks = False  # Don't wait for pending checks
+
+        pr_info = {
+            "headRefOid": "abc123",
+            "baseRefName": "main",
+        }
+
+        # Mock pending status checks
+        status_data = {
+            "statuses": [
+                {"context": "ci/build", "state": "success", "description": "Build passed"},
+                {"context": "ci/test", "state": "pending", "description": "Tests running"},
+            ]
+        }
+
         with (
-            patch("auto.workflows.merge_validation._get_pr_info") as mock_get_pr,
-            patch("auto.workflows.merge_validation._fetch_status_checks") as mock_fetch,
+            patch("auto.workflows.merge_validation._get_pr_info", return_value=pr_info),
+            patch("auto.workflows.merge_validation._get_pr_head_sha", return_value="abc123"),
+            patch("auto.workflows.merge_validation._fetch_status_checks", return_value=status_data),
             patch(
-                "auto.workflows.merge_validation._get_required_status_checks_from_protection"
-            ) as mock_required,
-            patch("auto.config.get_config") as mock_get_config,
+                "auto.workflows.merge_validation._get_required_status_checks_from_protection",
+                return_value=[],
+            ),
         ):
-            # Mock PR info
-            mock_get_pr.return_value = {
-                "headRefOid": "abc123",
-                "baseRefName": "main",
-            }
-
-            # Mock pending status checks
-            mock_fetch.return_value = {
-                "statuses": [
-                    {"context": "ci/build", "state": "success", "description": "Build passed"},
-                    {"context": "ci/test", "state": "pending", "description": "Tests running"},
-                ]
-            }
-
-            mock_required.return_value = []
-
-            # Mock config to not wait for checks
-            from auto.models import Config
-
-            config = Config()
-            config.workflows.wait_for_checks = False
-            mock_get_config.return_value = config
-
-            # Execute - need to create mock repository and config
-            from auto.models import GitHubRepository
-
-            repository = GitHubRepository(owner="owner", name="repo")
+            # Execute
             result = await _validate_status_checks(123, repository, config)
 
             # Assert
             assert result.success is False
-            assert "pending" in result.message.lower() or "status" in result.message.lower()
+            assert any("ci/test" in item for item in result.actionable_items)
 
 
 class TestMergeIntegration:

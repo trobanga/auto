@@ -91,7 +91,11 @@ class ClaudeIntegration:
             raise
 
     async def execute_review(
-        self, pr_number: int, repository: str, custom_prompt: str | None = None
+        self,
+        pr_number: int,
+        repository: str,
+        custom_prompt: str | None = None,
+        worktree_path: str | None = None,
     ) -> AIResponse:
         """
         Execute AI review for a pull request.
@@ -100,6 +104,7 @@ class ClaudeIntegration:
             pr_number: Pull request number
             repository: Repository name
             custom_prompt: Optional custom prompt override
+            worktree_path: Optional worktree path for review context
 
         Returns:
             AIResponse containing review results
@@ -110,7 +115,9 @@ class ClaudeIntegration:
             prompt = await self._format_review_prompt(pr_number, repository, custom_prompt)
 
             self.logger.info(f"Running AI review for PR #{pr_number}")
-            result = await self._execute_ai_command(prompt=prompt, agent=self.config.review_agent)
+            result = await self._execute_ai_command(
+                prompt=prompt, agent=self.config.review_agent, working_directory=worktree_path
+            )
 
             if not result.success:
                 raise AIIntegrationError(
@@ -170,7 +177,11 @@ class ClaudeIntegration:
             raise
 
     async def execute_update_from_review(
-        self, repository: str, comments: str, custom_prompt: str | None = None
+        self,
+        repository: str,
+        comments: str,
+        custom_prompt: str | None = None,
+        worktree_path: str | None = None,
     ) -> AIResponse:
         """
         Execute AI update to address review comments (review workflow variant).
@@ -179,6 +190,7 @@ class ClaudeIntegration:
             repository: Repository name
             comments: Formatted review comments to address
             custom_prompt: Optional custom prompt override
+            worktree_path: Optional worktree path for updates
 
         Returns:
             AIResponse containing update results
@@ -189,7 +201,9 @@ class ClaudeIntegration:
             prompt = self._format_review_update_prompt(repository, comments, custom_prompt)
 
             self.logger.info(f"Running AI update for review comments in {repository}")
-            result = await self._execute_ai_command(prompt=prompt, agent=self.config.update_agent)
+            result = await self._execute_ai_command(
+                prompt=prompt, agent=self.config.update_agent, working_directory=worktree_path
+            )
 
             if not result.success:
                 raise AIIntegrationError(
@@ -206,7 +220,11 @@ class ClaudeIntegration:
             raise
 
     async def analyze_review_comments(
-        self, comments: str, repository: str, custom_prompt: str | None = None
+        self,
+        comments: str,
+        repository: str,
+        custom_prompt: str | None = None,
+        worktree_path: str | None = None,
     ) -> AIResponse:
         """
         Analyze review comments using AI for categorization and prioritization.
@@ -215,6 +233,7 @@ class ClaudeIntegration:
             comments: Formatted review comments to analyze
             repository: Repository name
             custom_prompt: Optional custom prompt override
+            worktree_path: Optional worktree path for analysis context
 
         Returns:
             AIResponse containing comment analysis results
@@ -243,7 +262,9 @@ Focus on identifying the most critical issues that need immediate attention."""
 
             self.logger.info(f"Analyzing review comments for {repository}")
             result = await self._execute_ai_command(
-                prompt=prompt, agent=self.config.review_agent or "pull-request-reviewer"
+                prompt=prompt,
+                agent=self.config.review_agent or "pull-request-reviewer",
+                working_directory=worktree_path,
             )
 
             if not result.success:
@@ -266,6 +287,7 @@ Focus on identifying the most critical issues that need immediate attention."""
         context: dict[str, Any],
         repository: str,
         custom_prompt: str | None = None,
+        worktree_path: str | None = None,
     ) -> AIResponse:
         """
         Generate professional response to a specific review comment.
@@ -275,6 +297,7 @@ Focus on identifying the most critical issues that need immediate attention."""
             context: Additional context (file, line, issue details)
             repository: Repository name
             custom_prompt: Optional custom prompt override
+            worktree_path: Optional worktree path for context
 
         Returns:
             AIResponse containing generated response
@@ -314,7 +337,9 @@ Keep the response professional, concise, and constructive. Show that you underst
 
             self.logger.debug(f"Generating response for comment in {repository}")
             result = await self._execute_ai_command(
-                prompt=prompt, agent=self.config.update_agent or "coder"
+                prompt=prompt,
+                agent=self.config.update_agent or "coder",
+                working_directory=worktree_path,
             )
 
             if not result.success:
@@ -472,6 +497,7 @@ Include appropriate sections like ## Summary, ## Changes, etc."""
             result = await self._execute_ai_command(
                 prompt=prompt,
                 agent="git-commit-expert",  # Use commit expert for documentation
+                working_directory=worktree_path,
             )
 
             if not result.success:

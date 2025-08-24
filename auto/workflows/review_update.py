@@ -718,7 +718,9 @@ class ReviewUpdateWorkflow:
             context = await self._build_update_context(update_plan, issue, repository)
 
             # Execute AI update
-            ai_response = await self.ai.execute_update_from_review(repository, context)
+            ai_response = await self.ai.execute_update_from_review(
+                repository, context, worktree_path=worktree_path
+            )
 
             if not ai_response.success:
                 return UpdateResult(

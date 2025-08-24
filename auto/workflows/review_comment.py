@@ -964,8 +964,10 @@ Please provide:
 
 Keep the response professional, concise, and constructive."""
 
-            # Get AI response
-            ai_result = await self.ai.execute_update_from_review(repository, prompt)
+            # Get AI response (no worktree needed for comment responses)
+            ai_result = await self.ai.execute_update_from_review(
+                repository, prompt, worktree_path=None
+            )
 
             if not ai_result.success:
                 self.logger.warning(

@@ -17,6 +17,7 @@ from typing import Any
 from ..config import get_config
 from ..integrations.ai import ClaudeIntegration
 from ..integrations.review import GitHubReviewIntegration, ReviewComment
+from ..models import Config
 from ..utils.logger import logger
 
 
@@ -48,6 +49,7 @@ class ReviewCycleState:
     last_activity: float
     max_iterations: int
     iteration_count: int = 0  # Backward compatibility field
+    worktree_path: str | None = None  # Path to worktree for code updates
 
     def __post_init__(self) -> None:
         """Validate state parameters after initialization."""
@@ -67,7 +69,10 @@ class ReviewWorkflowError(Exception):
 
 
 async def execute_review_cycle(
-    pr_number: int, repository: str, max_iterations: int | None = None
+    pr_number: int,
+    repository: str,
+    max_iterations: int | None = None,
+    worktree_path: str | None = None,
 ) -> ReviewCycleState:
     """
     Execute the complete review cycle orchestration.
@@ -83,6 +88,7 @@ async def execute_review_cycle(
         pr_number: Pull request number
         repository: Repository name (owner/repo format)
         max_iterations: Maximum number of review iterations (default from config)
+        worktree_path: Optional path to worktree for AI operations
 
     Returns:
         ReviewCycleState with final status
@@ -94,6 +100,16 @@ async def execute_review_cycle(
         config = get_config()
         max_iterations = max_iterations or config.workflows.max_review_iterations
 
+        # If worktree_path is not provided, try to detect it
+        if worktree_path is None:
+            worktree_path = await _detect_worktree_for_pr(pr_number, repository, config)
+            if worktree_path:
+                logger.info(f"Detected worktree path for PR #{pr_number}: {worktree_path}")
+            else:
+                logger.warning(
+                    f"No worktree found for PR #{pr_number}, AI operations will run in current directory"
+                )
+
         state = ReviewCycleState(
             pr_number=pr_number,
             repository=repository,
@@ -104,6 +120,7 @@ async def execute_review_cycle(
             unresolved_comments=[],
             last_activity=time.time(),
             max_iterations=max_iterations,
+            worktree_path=worktree_path,
         )
 
         logger.info(f"Starting review cycle for PR #{pr_number} (max {max_iterations} iterations)")
@@ -177,7 +194,9 @@ async def trigger_ai_review(state: ReviewCycleState) -> None:
 
         # Execute AI review
         ai_response = await ai_integration.execute_review(
-            pr_number=state.pr_number, repository=state.repository
+            pr_number=state.pr_number,
+            repository=state.repository,
+            worktree_path=state.worktree_path,
         )
 
         # Post AI review comments
@@ -405,7 +424,7 @@ async def trigger_ai_update(state: ReviewCycleState) -> None:
 
         # Execute AI update using the review workflow method
         ai_response = await ai_integration.execute_update_from_review(
-            repository=state.repository, comments=comments_text
+            repository=state.repository, comments=comments_text, worktree_path=state.worktree_path
         )
 
         logger.info(f"AI update completed: {ai_response.summary}")
@@ -427,7 +446,9 @@ async def trigger_ai_update(state: ReviewCycleState) -> None:
         raise ReviewWorkflowError(f"AI update execution failed: {e}") from e
 
 
-async def initiate_review_cycle(pr_number: int, repository: str) -> ReviewCycleState:
+async def initiate_review_cycle(
+    pr_number: int, repository: str, worktree_path: str | None = None
+) -> ReviewCycleState:
     """
     Start review cycle for existing PR.
 
@@ -437,12 +458,13 @@ async def initiate_review_cycle(pr_number: int, repository: str) -> ReviewCycleS
     Args:
         pr_number: Pull request number
         repository: Repository name
+        worktree_path: Optional path to worktree for AI operations
 
     Returns:
         ReviewCycleState with final status
     """
     logger.info(f"Initiating review cycle for existing PR #{pr_number}")
-    return await execute_review_cycle(pr_number, repository)
+    return await execute_review_cycle(pr_number, repository, worktree_path=worktree_path)
 
 
 async def get_review_cycle_status(pr_number: int, owner: str, repo: str) -> ReviewCycleState | None:
@@ -485,4 +507,115 @@ async def get_review_cycle_status(pr_number: int, owner: str, repo: str) -> Revi
 
     except Exception as e:
         logger.error(f"Error getting review cycle status for PR #{pr_number}: {e}")
+        return None
+
+
+async def _detect_worktree_for_pr(pr_number: int, repository: str, config: Config) -> str | None:
+    """Detect worktree path for a PR by examining the PR and looking for existing worktrees.
+
+    Args:
+        pr_number: Pull request number
+        repository: Repository name (owner/repo format)
+        config: Configuration object
+
+    Returns:
+        Path to worktree if found, None otherwise
+    """
+    try:
+        import os
+        from pathlib import Path
+
+        from ..integrations.git import GitWorktreeManager
+        from ..models import Issue, IssueProvider, IssueStatus
+        from .merge_validation import _get_pr_info
+
+        # Parse repository
+        owner, repo = repository.split("/")
+
+        # Get PR info to extract issue ID
+        pr_info = await _get_pr_info(pr_number, owner, repo)
+
+        if not pr_info:
+            return None
+
+        # Try to extract issue ID from PR body
+        pr_body = pr_info.get("body", "")
+        issue_id = None
+
+        # Look for common patterns: "Closes #12", "Fixes #12", "Resolves #12"
+        import re
+
+        patterns = [r"(?:closes|fixes|resolves)\s+#(\d+)", r"issue\s+#(\d+)", r"#(\d+)"]
+
+        for pattern in patterns:
+            match = re.search(pattern, pr_body, re.IGNORECASE)
+            if match:
+                issue_id = f"#{match.group(1)}"
+                break
+
+        if not issue_id:
+            # Fallback: use PR number as issue ID
+            issue_id = f"#{pr_number}"
+
+        # Create a minimal Issue object for worktree path generation
+        issue = Issue(
+            id=issue_id,
+            provider=IssueProvider.GITHUB,
+            title=pr_info.get("title", f"PR #{pr_number}"),
+            description=pr_info.get("body", ""),
+            status=IssueStatus.OPEN
+            if pr_info.get("state", "open") == "open"
+            else IssueStatus.CLOSED,
+            assignee=pr_info.get("assignees", [{}])[0].get("login")
+            if pr_info.get("assignees")
+            else None,
+            labels=[label.get("name") for label in pr_info.get("labels", [])],
+            url=pr_info.get("url", ""),
+            created_at=pr_info.get("createdAt", ""),
+            updated_at=pr_info.get("updatedAt", ""),
+        )
+
+        # Generate expected worktree path
+        git_integration = GitWorktreeManager(config)
+        branch_name = git_integration.generate_branch_name(issue)
+        worktree_path = str(git_integration.generate_worktree_path(branch_name))
+
+        # Check if worktree exists at expected location
+        if os.path.exists(worktree_path):
+            return worktree_path
+
+        # If not found at expected location, try alternative patterns
+        from ..utils.shell import get_main_repo_root
+
+        main_repo = get_main_repo_root()
+        project_name = main_repo.name if main_repo else "auto"
+
+        worktree_base = config.defaults.worktree_base.format(project=project_name)
+
+        # Make worktree_base absolute if it's relative
+        if not Path(worktree_base).is_absolute():
+            if main_repo:
+                worktree_base = str(main_repo / worktree_base)
+            else:
+                worktree_base = str(Path.cwd() / worktree_base)
+
+        # Try different naming patterns
+        clean_issue_id = issue_id.lstrip("#")
+        potential_paths = [
+            f"{worktree_base}/auto-task-{clean_issue_id}",
+            f"{worktree_base}/auto-feature-{clean_issue_id}",
+            f"{worktree_base}/auto-enhancement-{clean_issue_id}",
+            f"{worktree_base}/auto-bug-{clean_issue_id}",
+            f"{worktree_base}/auto-{clean_issue_id}",
+            f"{worktree_base}/{branch_name}",
+        ]
+
+        for path in potential_paths:
+            if os.path.exists(path):
+                return path
+
+        return None
+
+    except Exception as e:
+        logger.debug(f"Error detecting worktree for PR #{pr_number}: {e}")
         return None

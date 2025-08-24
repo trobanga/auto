@@ -12,7 +12,7 @@ from auto.config import get_config
 from auto.integrations.review import GitHubReviewIntegration
 from auto.models import Config, GitHubRepository, ValidationResult
 from auto.utils.logger import get_logger
-from auto.utils.shell import run_command_async as run_command
+from auto.utils.shell import run_command_async
 
 logger = get_logger(__name__)
 
@@ -71,10 +71,9 @@ async def validate_merge_eligibility(
 
         # Check for required status checks
         if not force:
+            repository = GitHubRepository(owner=owner, name=repo)
             config = get_config()
-            validation_result = await _validate_status_checks(
-                pr_number, GitHubRepository(owner=owner, name=repo), config
-            )
+            validation_result = await _validate_status_checks(pr_number, repository, config)
             if not validation_result.success:
                 errors.append(validation_result.message)
                 errors.extend(validation_result.actionable_items)
@@ -590,9 +589,9 @@ async def _get_pr_head_sha(pr_number: int, owner: str, repo: str) -> str | None:
     try:
         cmd = ["gh", "api", f"repos/{owner}/{repo}/pulls/{pr_number}", "--jq", ".head.sha"]
 
-        result = await run_command(cmd)
+        result = await run_command_async(cmd)
         if result.returncode == 0:
-            return result.stdout.strip()
+            return str(result.stdout).strip()
         else:
             logger.warning(f"Failed to get PR head SHA: {result.stderr}")
             return None
@@ -608,7 +607,7 @@ async def _fetch_status_checks(owner: str, repo: str, sha: str) -> dict[str, Any
         # Get combined status (includes both status API and checks API results)
         cmd = ["gh", "api", f"repos/{owner}/{repo}/commits/{sha}/status", "--paginate"]
 
-        result = await run_command(cmd)
+        result = await run_command_async(cmd)
         if result.returncode == 0:
             status_data = json.loads(result.stdout) if result.stdout.strip() else {}
 
@@ -620,7 +619,7 @@ async def _fetch_status_checks(owner: str, repo: str, sha: str) -> dict[str, Any
                 "--paginate",
             ]
 
-            check_result = await run_command(check_cmd)
+            check_result = await run_command_async(check_cmd)
             if check_result.returncode == 0:
                 check_data = json.loads(check_result.stdout) if check_result.stdout.strip() else {}
                 if "check_runs" in check_data:
@@ -649,7 +648,7 @@ async def _get_required_status_checks_from_protection(
             ".required_status_checks.contexts // []",
         ]
 
-        result = await run_command(cmd)
+        result = await run_command_async(cmd)
         if result.returncode == 0 and result.stdout.strip():
             required_checks = json.loads(result.stdout)
             return required_checks if isinstance(required_checks, list) else []
@@ -686,7 +685,7 @@ async def _get_pr_info(pr_number: int, owner: str, repo: str) -> dict[str, Any]:
             "state,isDraft,mergeable,reviews,statusCheckRollup,baseRefName",
         ]
 
-        result = await run_command(cmd)
+        result = await run_command_async(cmd)
 
         if result.returncode == 0:
             return dict(json.loads(result.stdout))
