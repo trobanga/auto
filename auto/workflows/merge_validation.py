@@ -79,11 +79,13 @@ async def validate_merge_eligibility(
                 errors.extend(validation_result.actionable_items)
 
         # Check branch protection rules
-        protection_valid, protection_errors = await validate_branch_protection(
-            pr_info.get("base", {}).get("ref", "main"), owner, repo
-        )
-        if not protection_valid and not force:
-            errors.extend(protection_errors)
+        if not force:
+            repository = GitHubRepository(owner=owner, name=repo)
+            config = get_config()
+            protection_result = await _validate_branch_protection(pr_number, repository, config)
+            if not protection_result.success:
+                errors.append(protection_result.message)
+                errors.extend(protection_result.actionable_items)
 
         is_eligible = len(errors) == 0
 
@@ -662,13 +664,336 @@ async def _get_required_status_checks_from_protection(
         return []
 
 
+async def _validate_branch_protection(
+    pr_number: int, repository: GitHubRepository, config: Config
+) -> ValidationResult:
+    """Validate that PR complies with GitHub branch protection rules.
+
+    This function ensures merge operations comply with GitHub branch protection rules
+    and repository policies, including review requirements, status checks, and restrictions.
+
+    Args:
+        pr_number: Pull request number to validate
+        repository: Repository context for the PR
+        config: Configuration object with merge requirements
+
+    Returns:
+        ValidationResult with branch protection compliance status, message, and actionable items
+    """
+    logger.debug(f"Validating branch protection for PR #{pr_number}")
+
+    actionable_items = []
+    details = {}
+
+    try:
+        # Get PR information to determine the base branch
+        pr_info = await _get_pr_info(pr_number, repository.owner, repository.name)
+        if not pr_info:
+            return ValidationResult(
+                success=False,
+                message="Failed to retrieve PR information for branch protection validation",
+                details={"error": "Could not fetch PR details"},
+                actionable_items=["Check if the PR exists and is accessible"],
+            )
+
+        base_branch = pr_info.get("baseRefName", repository.default_branch)
+        details["base_branch"] = base_branch
+
+        # Fetch branch protection rules
+        protection_data = await _fetch_branch_protection_rules(
+            repository.owner, repository.name, base_branch
+        )
+
+        # Handle repositories without branch protection gracefully
+        if not protection_data:
+            logger.info(f"No branch protection rules found for {base_branch}")
+            return ValidationResult(
+                success=True,
+                message=f"No branch protection rules configured for {base_branch}",
+                details={"base_branch": base_branch, "protection_enabled": False},
+                actionable_items=[],
+            )
+
+        details.update(protection_data)
+        details["protection_enabled"] = True
+
+        # Get current user permissions to handle administrator overrides
+        user_permissions = await _get_user_permissions(repository.owner, repository.name)
+        is_admin = (user_permissions or {}).get("admin", False)
+        details["user_is_admin"] = is_admin
+
+        # Validate review requirements
+        review_validation_errors = []
+        if ((protection_data or {}).get("required_status_checks") or {}).get(
+            "enforce_admins", False
+        ) or not is_admin:
+            review_errors = await _validate_protection_review_requirements(
+                pr_number, repository, config, protection_data
+            )
+            review_validation_errors.extend(review_errors)
+
+        # Validate status check requirements
+        status_check_errors = []
+        if (protection_data or {}).get("required_status_checks"):
+            status_errors = await _validate_protection_status_checks(
+                pr_number, repository, config, protection_data
+            )
+            status_check_errors.extend(status_errors)
+
+        # Validate push restrictions
+        restriction_errors = []
+        if (protection_data or {}).get("restrictions"):
+            restriction_errors = await _validate_push_restrictions(
+                repository, protection_data, user_permissions or {}
+            )
+
+        # Combine all validation errors
+        all_errors = review_validation_errors + status_check_errors + restriction_errors
+
+        if all_errors:
+            actionable_items.extend(all_errors)
+
+            # Provide administrator override guidance if applicable
+            if is_admin and not (
+                ((protection_data or {}).get("required_status_checks") or {}).get(
+                    "enforce_admins", False
+                )
+            ):
+                actionable_items.append(
+                    "As an administrator, you can override some protection rules"
+                )
+
+        # Determine overall success
+        success = len(all_errors) == 0
+
+        # Create appropriate message
+        if success:
+            message = f"Branch protection rules for '{base_branch}' are satisfied"
+            if is_admin:
+                message += " (administrator access confirmed)"
+        else:
+            message = f"Branch protection validation failed for '{base_branch}': {len(all_errors)} issue(s)"
+            if all_errors:
+                message += f" - {all_errors[0]}"
+                if len(all_errors) > 1:
+                    message += f" and {len(all_errors) - 1} more"
+
+        logger.info(
+            f"Branch protection validation for PR #{pr_number}: {'PASSED' if success else 'FAILED'}"
+        )
+        if not success:
+            logger.warning(f"Branch protection issues: {'; '.join(all_errors[:3])}")
+
+        return ValidationResult(
+            success=success,
+            message=message,
+            details=details,
+            actionable_items=actionable_items,
+        )
+
+    except Exception as e:
+        import traceback
+
+        logger.error(f"Error validating branch protection for PR #{pr_number}: {e}")
+        logger.debug(f"Traceback: {traceback.format_exc()}")
+        return ValidationResult(
+            success=False,
+            message=f"Branch protection validation failed due to error: {str(e)}",
+            details={"error": str(e)},
+            actionable_items=[
+                "Check GitHub API connectivity and repository permissions",
+                "Verify repository exists and is accessible",
+                "Retry the validation",
+            ],
+        )
+
+
+async def _fetch_branch_protection_rules(
+    owner: str, repo: str, branch: str
+) -> dict[str, Any] | None:
+    """Fetch branch protection rules for a specific branch."""
+    cmd = [
+        "gh",
+        "api",
+        f"repos/{owner}/{repo}/branches/{branch}/protection",
+    ]
+
+    result = await run_command_async(cmd)
+    if result.returncode == 0 and result.stdout.strip():
+        protection_data: dict[str, Any] = json.loads(result.stdout)
+        return protection_data
+    else:
+        # Branch protection might not be enabled, which is fine
+        logger.debug(f"No branch protection rules found for {branch}: {result.stderr}")
+        return None
+
+
+async def _get_user_permissions(owner: str, repo: str) -> dict[str, Any]:
+    """Get current user permissions for the repository."""
+    try:
+        cmd = ["gh", "api", f"repos/{owner}/{repo}", "--jq", ".permissions"]
+
+        result = await run_command_async(cmd)
+        if result.returncode == 0 and result.stdout.strip():
+            permissions = json.loads(result.stdout)
+            return permissions or {}
+        else:
+            logger.debug(f"Could not fetch user permissions: {result.stderr}")
+            return {}
+
+    except Exception as e:
+        logger.debug(f"Error fetching user permissions: {e}")
+        return {}
+
+
+async def _validate_protection_review_requirements(
+    pr_number: int, repository: GitHubRepository, config: Config, protection_data: dict[str, Any]
+) -> list[str]:
+    """Validate review requirements from branch protection rules."""
+    errors: list[str] = []
+
+    # Get protection review requirements
+    required_reviews = (protection_data or {}).get("required_pull_request_reviews", {})
+    if not required_reviews:
+        return errors
+
+    required_review_count = required_reviews.get("required_approving_review_count", 0)
+    dismiss_stale_reviews = required_reviews.get("dismiss_stale_reviews", False)
+    require_code_owner_reviews = required_reviews.get("require_code_owner_reviews", False)
+
+    # Use existing review validation function to get current review status
+    review_result = await validate_reviews(pr_number, repository, config)
+    if not review_result:
+        errors.append("Could not retrieve review information for branch protection validation")
+        return errors
+    current_approvals = (review_result.details or {}).get("approval_count", 0)
+
+    # Check if we have enough approvals
+    if current_approvals < required_review_count:
+        needed = required_review_count - current_approvals
+        errors.append(
+            f"Branch protection requires {required_review_count} approving reviews, but only {current_approvals} found (need {needed} more)"
+        )
+
+    # Check for stale review dismissal requirement
+    if dismiss_stale_reviews:
+        stale_reviewers = (review_result.details or {}).get("stale_reviewers", [])
+        if stale_reviewers:
+            errors.append(
+                f"Branch protection dismisses stale reviews: {len(stale_reviewers)} stale review(s) found from {', '.join(stale_reviewers)}"
+            )
+
+    # Check for code owner review requirement
+    if require_code_owner_reviews:
+        # This would require additional API call to check CODEOWNERS file
+        # For now, we'll add a general notice
+        errors.append(
+            "Branch protection requires code owner review - verify code owners have approved"
+        )
+
+    return errors
+
+
+async def _validate_protection_status_checks(
+    pr_number: int, repository: GitHubRepository, config: Config, protection_data: dict[str, Any]
+) -> list[str]:
+    """Validate status check requirements from branch protection rules."""
+    errors: list[str] = []
+
+    required_status_checks = (protection_data or {}).get("required_status_checks")
+    if not required_status_checks:
+        return errors
+
+    # Use existing status check validation function
+    status_result = await _validate_status_checks(pr_number, repository, config)
+
+    if not status_result.success:
+        errors.append("Branch protection requires all status checks to pass")
+        # Add specific failing checks from the status validation
+        errors.extend(status_result.actionable_items[:2])  # Limit to first 2 for brevity
+
+    # Check for strict status checks (requiring branch to be up to date)
+    if required_status_checks.get("strict", False):
+        # We would need to check if the PR branch is up to date with base
+        # This is a simplified check - in practice would need more detailed validation
+        errors.append("Branch protection requires branch to be up to date before merging")
+
+    return errors
+
+
+async def _validate_push_restrictions(
+    repository: GitHubRepository, protection_data: dict[str, Any], user_permissions: dict[str, Any]
+) -> list[str]:
+    """Validate push restrictions from branch protection rules."""
+    errors: list[str] = []
+
+    restrictions = (protection_data or {}).get("restrictions")
+    if not restrictions:
+        return errors
+
+    # Get current user info
+    current_user = await _get_current_user()
+    if not current_user:
+        errors.append("Could not verify user permissions against push restrictions")
+        return errors
+
+    # Check user restrictions
+    allowed_users = restrictions.get("users", [])
+    allowed_teams = restrictions.get("teams", [])
+
+    # Simplified check - in practice would need team membership verification
+    user_login = (current_user or {}).get("login", "")
+
+    if allowed_users and user_login not in [user.get("login", "") for user in allowed_users]:
+        errors.append(
+            f"User '{user_login}' is not in the list of users allowed to push to this branch"
+        )
+
+    if allowed_teams:
+        # Team membership check would require additional API calls
+        errors.append("Branch has team-based push restrictions - verify team membership")
+
+    return errors
+
+
+async def _get_current_user() -> dict[str, Any] | None:
+    """Get current GitHub user information."""
+    try:
+        cmd = ["gh", "api", "user"]
+
+        result = await run_command_async(cmd)
+        if result.returncode == 0 and result.stdout.strip():
+            user_data: dict[str, Any] = json.loads(result.stdout)
+            return user_data
+        else:
+            logger.debug(f"Could not fetch current user info: {result.stderr}")
+            return None
+
+    except Exception as e:
+        logger.debug(f"Error fetching current user info: {e}")
+        return None
+
+
 async def validate_branch_protection(
     branch_name: str, owner: str, repo: str
 ) -> tuple[bool, list[str]]:
-    """Validate branch protection rules."""
-    # For now, just return True as branch protection validation
-    # would require more complex GitHub API calls
-    return True, []
+    """Legacy validate branch protection function for backward compatibility."""
+    # Create repository object for the new function
+    repository = GitHubRepository(owner=owner, name=repo, default_branch=branch_name)
+
+    # Use a default config for this legacy function
+    config = get_config()
+
+    # Create a mock PR number - this is a limitation of the legacy interface
+    # In practice, this function should be replaced with direct calls to _validate_branch_protection
+    try:
+        result = await _validate_branch_protection(
+            0, repository, config
+        )  # Use 0 as placeholder PR number
+        return result.success, result.actionable_items
+    except Exception:
+        # Fallback to simple validation for now
+        return True, []
 
 
 async def _get_pr_info(pr_number: int, owner: str, repo: str) -> dict[str, Any]:
