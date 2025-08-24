@@ -538,3 +538,68 @@ class TestAIIntegrationError:
         error = AIIntegrationError("Test error")
         assert str(error) == "Test error"
         assert error.exit_code is None
+
+
+class TestOutputExtraction:
+    """Test output extraction from Claude streaming format."""
+
+    def test_extract_result_from_streaming_output(self, ai_config):
+        """Test extracting final result from streaming JSON output."""
+        integration = ClaudeIntegration(ai_config)
+
+        # Simulate streaming output with multiple JSON objects
+        streaming_output = """{"type": "content", "content": "Starting analysis..."}
+{"type": "tool_use", "name": "read_file"}
+{"type": "content", "content": "Making changes..."}
+{"type": "result", "result": "## Summary\\n\\nImplemented the requested feature successfully.\\n\\n## Changes\\n\\n- Added new functionality\\n- Updated tests"}
+"""
+
+        result = integration._extract_result_from_output(streaming_output)
+
+        expected_result = "## Summary\n\nImplemented the requested feature successfully.\n\n## Changes\n\n- Added new functionality\n- Updated tests"
+        assert result == expected_result
+
+    def test_extract_result_with_no_result_object(self, ai_config):
+        """Test fallback when no result object is found."""
+        integration = ClaudeIntegration(ai_config)
+
+        # Simulate output without a result object
+        streaming_output = """{"type": "content", "content": "Some content"}
+{"type": "tool_use", "name": "read_file"}
+Regular text output without JSON
+"""
+
+        result = integration._extract_result_from_output(streaming_output)
+
+        # Should return the full output when no result object is found
+        assert result == streaming_output.strip()
+
+    def test_extract_result_with_multiple_results(self, ai_config):
+        """Test extracting the last result when multiple result objects exist."""
+        integration = ClaudeIntegration(ai_config)
+
+        # Simulate streaming output with multiple result objects
+        streaming_output = """{"type": "result", "result": "First result"}
+{"type": "content", "content": "More processing..."}
+{"type": "result", "result": "Final result with complete PR description"}
+"""
+
+        result = integration._extract_result_from_output(streaming_output)
+
+        # Should return the last result object
+        assert result == "Final result with complete PR description"
+
+    def test_extract_result_with_invalid_json(self, ai_config):
+        """Test handling invalid JSON gracefully."""
+        integration = ClaudeIntegration(ai_config)
+
+        # Simulate output with some invalid JSON
+        streaming_output = """{"type": "content", "content": "Valid JSON"}
+{invalid json line
+{"type": "result", "result": "Valid result"}
+"""
+
+        result = integration._extract_result_from_output(streaming_output)
+
+        # Should extract the valid result despite invalid JSON
+        assert result == "Valid result"

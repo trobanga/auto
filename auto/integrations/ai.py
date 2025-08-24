@@ -906,9 +906,8 @@ This PR implements the requested functionality with {len(file_changes)} file cha
                                         content = parse_streaming_json(decoded_line)
                                         if content:
                                             output_lines.append(content)
-                                            total_output += content + "\n"
-                                        # Always add raw line for debugging
-                                        total_output += f"[RAW] {decoded_line}\n"
+                                        # Add raw JSON line for processing by extract_result_from_output
+                                        total_output += decoded_line + "\n"
                                     else:
                                         # Standard text output
                                         output_lines.append(decoded_line)
