@@ -183,6 +183,14 @@ reviews:
 
 ## Integration Details
 
+### Python 
+- Before finishing:
+  - use `rust check auto tests --fix` and make sure there are no issues
+  - use `rust format auto tests`
+  - make sure `mypy auto` shows no issues
+  - All tests musts pass: `pytest .`
+
+
 ### GitHub Integration
 - Use `gh` CLI for all operations
 - Support both issue and PR URLs as input
