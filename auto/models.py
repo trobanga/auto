@@ -334,6 +334,13 @@ class DefaultsConfig(BaseModel):
     delete_branch_on_merge: bool = Field(default=True, description="Delete branch after merge")
     worktree_base: str = Field(default="../{project}-worktrees", description="Worktree base path")
     max_review_iterations: int = Field(default=10, description="Max review iterations")
+    merge_retry_attempts: int = Field(
+        default=3, description="Number of retry attempts for merge operations"
+    )
+    merge_retry_delay: float = Field(
+        default=1.0, description="Delay between retry attempts in seconds"
+    )
+    merge_timeout: int = Field(default=120, description="Timeout for merge operations in seconds")
 
 
 class GitHubConfig(BaseModel):
@@ -719,3 +726,36 @@ class IssueIdentifier(BaseModel):
             return cls(raw=identifier, provider=IssueProvider.GITHUB, issue_id=f"#{identifier}")
 
         raise ValueError(f"Unable to parse issue identifier: {identifier}") from None
+
+
+class MergeConflictDetails(BaseModel):
+    """Details about merge conflicts."""
+
+    conflicted_files: list[str] = Field(description="List of files with conflicts")
+    resolution_suggestions: list[str] = Field(
+        default_factory=lambda: [
+            "Review and resolve conflicts manually",
+            "Consider rebasing the branch",
+            "Contact the original author for guidance",
+        ],
+        description="Suggested resolution steps",
+    )
+
+
+class MergeExecutionResult(BaseModel):
+    """Result of a merge execution operation."""
+
+    success: bool = Field(description="Whether the merge was successful")
+    method_used: str = Field(description="The merge method that was used")
+    merge_commit_sha: str | None = Field(default=None, description="SHA of the merge commit")
+    retry_count: int = Field(default=0, description="Number of retries performed")
+    error_message: str | None = Field(default=None, description="Error message if failed")
+    validation_errors: list[str] = Field(
+        default_factory=list, description="Pre-merge validation errors"
+    )
+    conflict_details: MergeConflictDetails | None = Field(
+        default=None, description="Conflict details if any"
+    )
+    github_api_response: dict[str, Any] = Field(
+        default_factory=dict, description="Raw GitHub API response"
+    )
