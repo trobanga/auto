@@ -719,3 +719,63 @@ class IssueIdentifier(BaseModel):
             return cls(raw=identifier, provider=IssueProvider.GITHUB, issue_id=f"#{identifier}")
 
         raise ValueError(f"Unable to parse issue identifier: {identifier}") from None
+
+
+class ConflictType(str, Enum):
+    """Types of merge conflicts."""
+    
+    CONTENT = "content"
+    RENAME = "rename"  
+    DELETE = "delete"
+    MODIFY_DELETE = "modify_delete"
+    ADD_ADD = "add_add"
+    MODE = "mode"
+
+
+class ConflictComplexity(str, Enum):
+    """Complexity levels for merge conflicts."""
+    
+    SIMPLE = "simple"
+    MODERATE = "moderate"
+    COMPLEX = "complex"
+    CRITICAL = "critical"
+
+
+class ConflictDetail(BaseModel):
+    """Individual merge conflict details."""
+    
+    file_path: str = Field(description="Path to conflicted file")
+    conflict_type: ConflictType = Field(description="Type of conflict")
+    complexity: ConflictComplexity = Field(description="Conflict complexity level")
+    description: str = Field(description="Human-readable conflict description")
+    ours_content: str | None = Field(default=None, description="Our version content")
+    theirs_content: str | None = Field(default=None, description="Their version content")
+    ancestor_content: str | None = Field(default=None, description="Common ancestor content")
+    line_numbers: list[int] = Field(default_factory=list, description="Conflicted line numbers")
+    metadata: dict[str, Any] = Field(default_factory=dict, description="Additional conflict metadata")
+
+
+class ResolutionSuggestion(BaseModel):
+    """AI-generated suggestion for conflict resolution."""
+    
+    file_path: str = Field(description="Path to conflicted file")
+    suggested_resolution: str = Field(description="Suggested resolution approach")
+    confidence: float = Field(description="AI confidence score (0.0-1.0)")
+    rationale: str = Field(description="Explanation for the suggestion")
+    manual_steps: list[str] = Field(default_factory=list, description="Manual steps to resolve")
+    validation_steps: list[str] = Field(default_factory=list, description="Steps to validate resolution")
+    alternative_approaches: list[str] = Field(default_factory=list, description="Alternative resolution strategies")
+    
+
+class ConflictResolution(BaseModel):
+    """Complete merge conflict resolution analysis."""
+    
+    conflicts_detected: list[ConflictDetail] = Field(description="List of detected conflicts")
+    resolution_suggestions: list[ResolutionSuggestion] = Field(description="AI-generated resolution suggestions")
+    manual_steps: list[str] = Field(description="Overall manual resolution steps")
+    ai_assistance_available: bool = Field(description="Whether AI can assist with resolution")
+    estimated_resolution_time: int = Field(description="Estimated time to resolve (minutes)")
+    complexity_score: float = Field(description="Overall complexity score (0.0-10.0)")
+    priority_order: list[str] = Field(description="Suggested order to resolve conflicts by file path")
+    conflict_summary: str = Field(description="Human-readable summary of conflicts")
+    resolution_report: str = Field(description="Detailed resolution guidance report")
