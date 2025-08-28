@@ -383,8 +383,12 @@ class GitWorktreeManager:
             GitWorktreeError: If base branch preparation fails
         """
         try:
-            # Fetch latest changes
-            run_command("git fetch", check=False)  # Non-critical if it fails
+            # Fetch latest changes - this is critical for creating clean worktrees
+            logger.debug("Fetching latest changes for base branch preparation")
+            result = run_command("git fetch", check=False)  # Non-critical if it fails
+            if not result.success:
+                logger.warning(f"Git fetch failed: {result.stderr}")
+                logger.warning("Proceeding without latest changes - may cause merge conflicts")
 
             # Check if base branch exists locally
             result = run_command(f"git branch --list {base_branch}", check=False)
@@ -418,8 +422,9 @@ class GitWorktreeManager:
             worktree_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Create worktree with new branch with timeout
+            # Use origin/{base_branch} to ensure we branch from the latest remote state
             result = run_command(
-                f"git worktree add -b {branch_name} {worktree_path} {base_branch}",
+                f"git worktree add -b {branch_name} {worktree_path} origin/{base_branch}",
                 check=True,
                 timeout=60,  # 60 second timeout for worktree operations
             )
