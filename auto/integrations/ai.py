@@ -281,6 +281,111 @@ Focus on identifying the most critical issues that need immediate attention."""
             self.logger.error(f"Comment analysis failed for {repository}: {e}")
             raise
 
+    async def analyze_merge_conflicts(
+        self,
+        conflict_details: str,
+        pr_context: dict[str, Any],
+        repository: str,
+        custom_prompt: str | None = None,
+        worktree_path: str | None = None,
+    ) -> AIResponse:
+        """
+        Analyze merge conflicts using AI for detailed resolution guidance.
+
+        Args:
+            conflict_details: Git conflict output and details
+            pr_context: PR context information (number, title, description, etc.)
+            repository: Repository name
+            custom_prompt: Optional custom prompt override
+            worktree_path: Optional worktree path for context
+
+        Returns:
+            AIResponse containing conflict analysis and resolution suggestions
+        """
+        try:
+            await self._validate_prerequisites()
+
+            if custom_prompt:
+                prompt = custom_prompt
+            else:
+                # Build comprehensive conflict analysis prompt
+                context_info = []
+                if pr_context.get("number"):
+                    context_info.append(f"PR Number: #{pr_context['number']}")
+                if pr_context.get("title"):
+                    context_info.append(f"PR Title: {pr_context['title']}")
+                if pr_context.get("description"):
+                    context_info.append(f"PR Description: {pr_context['description']}")
+                if pr_context.get("files_changed"):
+                    context_info.append(f"Files Changed: {', '.join(pr_context['files_changed'])}")
+
+                context_str = "\n".join(context_info) if context_info else "Pull Request Context"
+
+                prompt = f"""Analyze the following merge conflicts and provide comprehensive resolution guidance.
+
+**Context:**
+Repository: {repository}
+{context_str}
+
+**Conflict Details:**
+{conflict_details}
+
+**Analysis Required:**
+1. **Conflict Classification**: Identify each conflicted file and classify the conflict type:
+   - Content conflicts (overlapping changes)
+   - Rename conflicts (file moved in both branches)
+   - Delete conflicts (deleted in one branch, modified in another)
+   - Add/Add conflicts (same file added in both branches)
+   - Mode conflicts (file permissions changed)
+
+2. **Complexity Assessment**: Rate each conflict's complexity:
+   - Simple: Straightforward line-level conflicts
+   - Moderate: Overlapping logical changes
+   - Complex: Significant structural conflicts
+   - Critical: Conflicts affecting core functionality
+
+3. **Resolution Strategies**: For each conflict, provide:
+   - Preferred resolution approach with rationale
+   - Step-by-step manual resolution instructions
+   - Alternative resolution strategies
+   - Validation steps to confirm resolution
+
+4. **Priority Ordering**: Suggest the order to resolve conflicts
+
+5. **Time Estimation**: Estimate resolution time in minutes
+
+**Output Format:**
+Please provide a structured analysis covering:
+- File-by-file conflict breakdown
+- Resolution recommendations with confidence scores
+- Manual resolution workflow
+- Overall complexity assessment
+- Estimated time to complete
+
+Focus on actionable guidance that a developer can follow to resolve these conflicts effectively."""
+
+            self.logger.info(f"Analyzing merge conflicts for {repository}")
+            result = await self._execute_ai_command(
+                prompt=prompt,
+                agent=self.config.review_agent or "coder",
+                working_directory=worktree_path,
+            )
+
+            if not result.success:
+                raise AIIntegrationError(
+                    f"Merge conflict analysis failed: {result.error}",
+                    exit_code=result.exit_code,
+                )
+
+            ai_response = self._parse_ai_response(result.output, "conflict_analysis")
+
+            self.logger.info(f"Merge conflict analysis completed for {repository}")
+            return ai_response
+
+        except Exception as e:
+            self.logger.error(f"Merge conflict analysis failed for {repository}: {e}")
+            raise
+
     async def generate_comment_response(
         self,
         comment: str,
